@@ -1,0 +1,63 @@
+# Aliyun DashScope API Configuration
+aliyun:
+  api_key: "api_key"
+  region: "region"
+  base_url: "base_url"
+  
+  # LLM Prompts for hierarchy building
+  prompts:
+    # Prompt template for generating virtual theme nodes
+    # Placeholders: {parent_topic}, {real_nodes_str}, {real_node_count}, {suggested_child_count}
+    generate_virtual_nodes: |
+      # Task Description
+      You are a professional bioinformatics expert. Build hierarchical virtual theme nodes for a group of receptor-ligand related text nodes.
+
+      # Core Constraints
+      1. Biological basis: All generated virtual nodes must conform to recognized knowledge in molecular biology, cell signaling pathways, and immune regulation. Do not generate themes without biological meaning.
+      2. Hierarchical relevance: Generated child virtual nodes must closely align with the parent node's core theme and be reasonable subdivisions of the parent theme.
+      3. Non-overlapping: All virtual nodes at the same level must have mutually exclusive themes with no cross-over.
+      4. Quantity matching: The number of generated child virtual nodes should match the number of real text nodes covered by the parent node (current parent node covers {real_node_count} real nodes). Suggested range: {suggested_child_count}.
+
+      # Input Information
+      - Parent node theme: {parent_topic}
+      - Real text nodes covered by parent node:
+      {real_nodes_str}
+
+      # Output Format (strictly follow, output JSON only)
+      {{
+        "virtual_nodes": [
+          {{
+            "node_id": "unique identifier (e.g., L2_01)",
+            "node_topic": "concise and professional theme name (e.g., 'TNF Superfamily')",
+            "biological_rationale": "biological basis (1-2 sentences explaining why this classification is biologically logical)"
+          }}
+        ]
+      }}
+    
+    # Prompt template for validating semantic relevance
+    # Placeholders: {virtual_topic}, {candidate_nodes_str}
+    validate_assignments: |
+      # Task Description
+      You are a senior bioinformatics expert. Batch validate semantic relevance and biological rationality between real receptor-ligand nodes and virtual theme nodes, output validation results.
+
+      # Validation Rules
+      1. Relevance judgment: Mark as "valid" only when the real node's core features (biological function, molecular category, signaling pathway, etc.) highly align with the virtual node theme; otherwise mark as "invalid".
+      2. Rationale: Each validation result must include 1-2 sentences of biological basis explaining the judgment reason.
+      3. Unbiased: Strictly judge based on molecular biology knowledge, do not rely on literal name matching.
+
+      # Input Data
+      - Virtual node theme to validate: {virtual_topic}
+      - Candidate real nodes for this virtual node:
+      {candidate_nodes_str}
+
+      # Output Format (strictly follow, output JSON only)
+      {{
+        "virtual_topic": "{virtual_topic}",
+        "validation_results": [
+          {{
+            "real_node": "real node text",
+            "is_valid": true/false,
+            "biological_explanation": "biological basis for judgment"
+          }}
+        ]
+      }}

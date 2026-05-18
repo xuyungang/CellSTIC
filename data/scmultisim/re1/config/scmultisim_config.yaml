@@ -1,0 +1,37 @@
+model:
+  dropout: 0.1
+  ccc:
+    encoder_dims: [120, 100, 80]
+    temperature: 0.4
+    decoder_dims: [320, 150]
+  feat:
+    encoder_dims: 
+      - [120, 100, 80]
+      - [120, 100, 80]
+    decoder_dims: 
+      - [80, 110]
+      - [80, 110]
+    output_dims: [160, 120, 80]
+  graph:
+    cluster_top_k: 10
+    cluster_size: 20
+    knn_top_k: 20
+    expression_percentile: 50
+    n_spots: 10
+  tree:
+    hierarchy_method: "balanced"
+
+train:
+  ccc:
+    epochs: 300
+    learning_rate: 0.004
+    weight_decay: 0.00
+    edge_type_loss_weight: 1
+    sampling_rate: 0.5
+  feat:
+    epochs: 500
+    learning_rate: 0.002
+    n_clusters: 4
+    weight_decay: 0.00
+    weight_modality: 0.4
+    entropy_weight: 0.3
