@@ -1,6 +1,7 @@
 # CellSTIC
 
 Decoding Hierarchical Cell-Cell Communication in Spatial Multi-Omics with CellSTIC.
+**Preprint:** [https://doi.org/10.64898/2026.05.27.728114](https://doi.org/10.64898/2026.05.27.728114)
 
 ## Installation
 
