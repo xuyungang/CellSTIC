@@ -172,10 +172,6 @@ Step-by-step Jupyter guides for each dataset. **Start Jupyter with the repositor
 
 Tutorials are edited under `notebook/` (paths above).
 
-## Final results
-
-Paper-level final CCC outputs and analysis artifacts (not tutorial inputs) are archived on [figshare](https://doi.org/10.6084/m9.figshare.32311635) (`10.6084/m9.figshare.32311635`).
-
 ## Feedback
 
 Bug reports, questions, and feature suggestions: please [open an issue](https://github.com/xuyungang/CellSTIC/issues) on GitHub.
