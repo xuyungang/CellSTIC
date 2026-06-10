@@ -3,6 +3,18 @@
 Decoding Hierarchical Cell-Cell Communication in Spatial Multi-Omics with CellSTIC.
 **Preprint:** [https://doi.org/10.64898/2026.05.27.728114](https://doi.org/10.64898/2026.05.27.728114)
 
+<p align="center">
+  <img src="assets/overview.png" alt="CellSTIC overview: linking in-situ tissue architecture to intercellular signaling programs" width="900"/>
+</p>
+
+## Method
+
+CellSTIC integrates spatial multi-omics evidence, functional region segmentation, and a ligand–receptor semantics tree to infer hierarchical cell–cell communication (CCC).
+
+<p align="center">
+  <img src="assets/method_workflow.png" alt="CellSTIC workflow: data input, evidence integration, LR semantics tree building, and CCC application" width="900"/>
+</p>
+
 ## Installation
 
 ```bash
