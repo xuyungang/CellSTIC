@@ -13,7 +13,7 @@ from .alluvial_viz import (
     _sanitize_filename as _sanitize_filename_alluvial,
     _sorted_level_keys,
 )
-from .domain_viz import load_domain_from_csv
+from .domain_viz import require_domain_obs
 from .icicle_viz import IcicleVisualizer as RadialAlluvialVisualizer
 from .sender_receiver_stacked_bar_viz import SenderReceiverStackedBarVisualizer
 
@@ -100,9 +100,6 @@ def _compute_leaf_strengths_per_domain_pair(
     tree_level_results: List[Dict[str, Any]],
     *,
     domain_key: str,
-    domain_path: Optional[Path],
-    domain_file_cell_id_column: str,
-    domain_file_domain_column: str,
     threshold: float,
 ) -> Tuple[Dict[Tuple[str, str], Dict[str, float]], List[str], Path, AnnData]:
     if not tree_level_results:
@@ -113,16 +110,7 @@ def _compute_leaf_strengths_per_domain_pair(
     pos_edge_probs_np: np.ndarray = leaf_result["pos_edge_probs_np"]
     edge_type_map: Dict[str, int] = leaf_result["edge_type_map"]
 
-    if domain_path is not None:
-        load_domain_from_csv(
-            adata,
-            domain_path=domain_path,
-            cell_id_column=domain_file_cell_id_column,
-            domain_column=domain_file_domain_column,
-            domain_obs_key=domain_key,
-        )
-    if domain_key not in adata.obs:
-        raise ValueError(f"domain_key '{domain_key}' not found in adata.obs; set domain_path or ensure column exists.")
+    require_domain_obs(adata, domain_key)
 
     domains = adata.obs[domain_key].astype(str).to_numpy()
     leaf_strengths_per_pair, leaf_names, _dom_names, _mat, _counts = _compute_leaf_strengths_by_group_pair(
@@ -313,9 +301,6 @@ def plot_alluvial_and_icicle_per_domain(
     tree_level_results: List[Dict[str, Any]],
     hierarchy_dict: Mapping[str, Any],
     domain_key: str = "domain",
-    domain_path: Optional[Path] = None,
-    domain_file_cell_id_column: str = "cell_id",
-    domain_file_domain_column: str = "cluster",
     threshold: float = 0.7,
     min_width_fraction: float = 0.01,
     figsize: Tuple[float, float] = (8.0, 5.0),
@@ -333,9 +318,6 @@ def plot_alluvial_and_icicle_per_domain(
     leaf_strengths_per_pair, leaf_names, default_base_dir, _adata = _compute_leaf_strengths_per_domain_pair(
         tree_level_results,
         domain_key=domain_key,
-        domain_path=domain_path,
-        domain_file_cell_id_column=domain_file_cell_id_column,
-        domain_file_domain_column=domain_file_domain_column,
         threshold=threshold,
     )
 

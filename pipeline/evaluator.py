@@ -212,4 +212,5 @@ class CellSTICEvaluator:
 
         unique_clusters = sorted(np.unique(cluster_labels.astype(str)))
         primary_adata.obs["cluster"] = pd.Categorical(cluster_labels.astype(str), categories=unique_clusters)
+        primary_adata.obs["domain"] = primary_adata.obs["cluster"]
         primary_adata.obsm["out"] = fused_np

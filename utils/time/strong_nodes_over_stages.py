@@ -25,69 +25,21 @@ from utils.viz.matplotlib_svg import savefig as savefig_vector
 _LOG_PREFIX = "[StrongNodesOverStages]"
 
 
-def _find_cci_csv_for_organ_lr(
-    cci_root: Path,
-    stage: str,
-    organ: str,
-    lr_pair: str,
-) -> Optional[Path]:
-    """
-    Resolve the CCI CSV path for (stage, organ, lr_pair), tolerant to '-' vs '_' in LR names.
-    """
-    stage_dir = Path(cci_root) / str(stage) / organ
-    if not stage_dir.exists():
-        return None
-
-    candidates = [
-        lr_pair,
-        lr_pair.replace("-", "_"),
-        lr_pair.replace("_", "-"),
-    ]
-    for stem in candidates:
-        path = stage_dir / f"{stem}.csv"
-        if path.exists():
-            return path
-    return None
-
-
-def _compute_node_strengths(csv_path: Path, threshold: float) -> Optional[np.ndarray]:
-    """
-    Compute per-node strength from a CCI matrix:
-
-        strength(node) = sum of outgoing + incoming weights (after thresholding).
-
-    Returns:
-        1D numpy array of strengths, or None if not computable.
-    """
-    try:
-        df = pd.read_csv(csv_path, index_col=0, low_memory=False)
-    except Exception as e:
-        print(f"{_LOG_PREFIX} Warning: failed to read {csv_path}: {e}")
-        return None
+def _compute_node_strengths_from_dataframe(df: pd.DataFrame, threshold: float) -> Optional[np.ndarray]:
     if df.empty:
         return None
-
     try:
         values = df.to_numpy(dtype=np.float32, copy=False)
     except (TypeError, ValueError):
         values = df.to_numpy()
-
-    # Threshold
     values = np.where(values > threshold, values, 0.0)
-
-    # Outgoing strength per source node (row index)
     s_out = pd.Series(values.sum(axis=1), index=df.index.astype(str))
-    # Incoming strength per target node (column index)
     s_in = pd.Series(values.sum(axis=0), index=df.columns.astype(str))
-
-    # Union of all node labels from rows and columns
     all_nodes = sorted(set(s_out.index) | set(s_in.index))
-    strengths = []
-    for node in all_nodes:
-        total = float(s_out.get(node, 0.0) + s_in.get(node, 0.0))
-        strengths.append(total)
-
-    strengths_arr = np.asarray(strengths, dtype=float)
+    strengths_arr = np.asarray(
+        [float(s_out.get(node, 0.0) + s_in.get(node, 0.0)) for node in all_nodes],
+        dtype=float,
+    )
     if strengths_arr.size == 0 or not np.any(strengths_arr > 0):
         return None
     return strengths_arr
@@ -97,91 +49,46 @@ def _compute_strong_node_contributions(
     strengths: np.ndarray,
     ks: List[int],
 ) -> Dict[int, float]:
-    """
-    Given an array of node strengths, compute contribution of top-K nodes
-    for each K in ks.
-    """
     strengths = np.asarray(strengths, dtype=float)
     strengths = strengths[np.isfinite(strengths)]
     strengths = strengths[strengths > 0]
     if strengths.size == 0:
         return {k: float("nan") for k in ks}
-
     strengths_sorted = np.sort(strengths)[::-1]
     total = float(strengths_sorted.sum())
     if total <= 0:
         return {k: float("nan") for k in ks}
-
-    contributions: Dict[int, float] = {}
-    for k in ks:
-        k_eff = min(k, strengths_sorted.size)
-        top_sum = float(strengths_sorted[:k_eff].sum())
-        contributions[k] = top_sum / total
-    return contributions
+    return {
+        k: float(strengths_sorted[: min(k, strengths_sorted.size)].sum()) / total
+        for k in ks
+    }
 
 
 def compute_strong_nodes_table(
-    cci_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
+    cci_source,
     threshold: float = 0.0,
     ks: Optional[List[int]] = None,
 ) -> pd.DataFrame:
-    """
-    Compute strong-node contribution table over stages.
-
-    Returns a tidy DataFrame with columns:
-        organ, stage, k, contribution
-    where contribution is the fraction of total node strength contributed
-    by the top-k strongest nodes.
-    """
-    cci_root = Path(cci_root)
-    if not cci_root.exists():
-        raise FileNotFoundError(f"CCI root directory not found: {cci_root}")
-
     if ks is None:
         ks = [5, 10, 15]
     ks_sorted = sorted(int(k) for k in ks)
-
     rows: List[Dict[str, object]] = []
-    organs = list(region_lr_map.keys())
-
     for stage in stages:
-        for organ in organs:
-            lr_pair = region_lr_map.get(organ)
-            if not lr_pair:
+        for organ, lr_pair in region_lr_map.items():
+            df = cci_source.load_cci_for_lr_pair(str(stage), organ, lr_pair)
+            if df is None:
                 continue
-            csv_path = _find_cci_csv_for_organ_lr(
-                cci_root=cci_root,
-                stage=str(stage),
-                organ=organ,
-                lr_pair=lr_pair,
-            )
-            if csv_path is None:
-                print(
-                    f"{_LOG_PREFIX} Skip (missing CCI): {stage} / {organ} / {lr_pair}.csv",
-                    flush=True,
-                )
-                continue
-
-            strengths = _compute_node_strengths(csv_path, threshold=threshold)
+            strengths = _compute_node_strengths_from_dataframe(df, threshold=threshold)
             if strengths is None:
                 continue
-
-            contribs = _compute_strong_node_contributions(strengths, ks_sorted)
-            for k_val, contrib in contribs.items():
+            for k_val, contrib in _compute_strong_node_contributions(strengths, ks_sorted).items():
                 rows.append(
-                    {
-                        "organ": organ,
-                        "stage": str(stage),
-                        "k": int(k_val),
-                        "contribution": float(contrib),
-                    }
+                    {"organ": organ, "stage": str(stage), "k": int(k_val), "contribution": float(contrib)}
                 )
-
     if not rows:
         return pd.DataFrame(columns=["organ", "stage", "k", "contribution"])
-
     df = pd.DataFrame(rows)
     df["k"] = df["k"].astype(int)
     return df
@@ -341,26 +248,18 @@ def _load_strong_nodes_from_cache(
 
 
 def compute_save_and_plot_strong_nodes_over_stages(
-    cci_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
     threshold: float,
     output_dir: Path,
+    *,
+    cci_source,
     ks: Optional[List[int]] = None,
     recompute: bool = False,
     verbose: bool = True,
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> bool:
-    """
-    End-to-end helper:
-
-    - For each (stage, organ), read the CCI matrix selected via region_lr_map.
-    - Compute node strengths and strong-node contributions for top-K nodes.
-    - Cache the long-format table and re-plot from cache if possible.
-    - Plot a single figure summarizing Brain/Liver Top 5/10/15 over stages.
-    """
-    cci_root = Path(cci_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -391,9 +290,9 @@ def compute_save_and_plot_strong_nodes_over_stages(
             return True
 
     df = compute_strong_nodes_table(
-        cci_root=cci_root,
         stages=stages,
         region_lr_map=region_lr_map,
+        cci_source=cci_source,
         threshold=threshold,
         ks=ks_sorted,
     )

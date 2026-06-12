@@ -209,7 +209,7 @@ class LigandReceptorSpatialVisualizer:
         but cell polygons are colored by region (one color per region) instead of by
         hotspot score. Optionally restrict to a subset of regions via regions_to_plot.
 
-        Expects adata.obs[region_key] to contain region labels (e.g. from load_domain_from_csv).
+        Expects adata.obs[region_key] to contain domain/region labels.
         """
         if pos_edge_probs is not None:
             try:
@@ -225,7 +225,7 @@ class LigandReceptorSpatialVisualizer:
         if region_key not in adata.obs:
             raise ValueError(
                 f"region_key '{region_key}' not found in adata.obs; "
-                "load domain/region first (e.g. via load_domain_from_csv) or set region_key."
+                "ensure domain labels are stored in adata.obs (e.g. obs['domain'])."
             )
 
         region_labels = adata.obs[region_key].astype(str).to_numpy()

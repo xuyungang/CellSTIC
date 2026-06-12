@@ -1,5 +1,5 @@
 """
-Metrics: CCC CSV export and Region (spatial + UMAP + metrics + CSV).
+Metrics: CCC evaluation CSV export and region clustering visualization.
 """
 
 from pathlib import Path
@@ -20,7 +20,7 @@ from utils.metrics.palette_utils import get_custom_palette
 
 class MetricsComputer:
     """
-    Single entry for metrics computation: CCC CSV metrics and Region (spatial + UMAP + metrics + CSV).
+    Single entry for metrics computation: CCC evaluation CSVs and region clustering export.
     """
 
     @staticmethod
@@ -99,8 +99,8 @@ class MetricsComputer:
         n_neighbors: int = 40,
     ) -> None:
         """
-        Spatial + UMAP + clustering metrics + CSV export (Region).
-        Saves: spatial_domain.svg, umap.svg, cell_partitions.csv, clustering_metrics.csv.
+        Spatial + UMAP + clustering metrics export (Region).
+        Writes domain labels to ``adata.obs['domain']`` and saves SVG + clustering_metrics.csv.
         """
         save_dir = Path(save_dir)
 
@@ -132,6 +132,7 @@ class MetricsComputer:
 
         unique_clusters = sorted(np.unique(cluster_labels.astype(str)))
         adata.obs["cluster"] = pd.Categorical(cluster_labels.astype(str), categories=unique_clusters)
+        adata.obs["domain"] = adata.obs["cluster"]
         palette = get_custom_palette(len(unique_clusters))
 
         SpatialVisualizer.generate_spatial_domain_visualization(
@@ -150,22 +151,6 @@ class MetricsComputer:
             n_neighbors=n_neighbors,
         )
 
-        df_data = {
-            "cell_id": adata.obs_names.values,
-            "cluster": adata.obs["cluster"].values.astype(str),
-        }
-        if "spatial" in adata.obsm and adata.obsm["spatial"].shape[1] >= 2:
-            c = adata.obsm["spatial"]
-            df_data["x"], df_data["y"] = c[:, 0], c[:, 1]
-            if c.shape[1] >= 3:
-                df_data["z"] = c[:, 2]
-        partitions_path = domain_dir / "cell_partitions.csv"
-        pd.DataFrame(df_data).sort_values(["cluster", "cell_id"]).to_csv(
-            partitions_path, index=False, encoding="utf-8"
-        )
-        print(f"Cell partitions saved to {partitions_path}")
-
-        # Compute and save clustering metrics
         metrics_dict = ClusteringMetrics.calculate_metrics(
             features_np, true_labels=true_labels, cluster_labels=cluster_labels
         )

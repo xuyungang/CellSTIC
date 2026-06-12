@@ -15,7 +15,7 @@ from utils.analysis import (
     SenderReceiverStackedBarVisualizer,
     DifferentialAnalyzer,
     DomainVisualizer,
-    load_domain_from_csv,
+    require_domain_obs,
     AggregatedHeatmapVisualizer,
     LigandReceptorSpatialVisualizer,
     StrengthDistanceVisualizer,
@@ -50,9 +50,7 @@ class DomainAnalysis:
     """Domain-level analysis (e.g. domain×domain communication, domain-specific metrics)."""
 
     _DEFAULTS = {
-        "domain_path": None,
-        "domain_file_cell_id_column": "cell_id",
-        "domain_file_domain_column": "cluster",
+        "domain_key": "domain",
         "cell_type_key": "cell_type",
         "top_n_cell_types": 15,
         "figsize": (10, 5),
@@ -80,22 +78,19 @@ class DomainAnalysis:
         print(f"[DomainAnalysis] {message}")
 
     def run_domain_cell_type_stacked_bar(self, **overrides) -> None:
-        """Stacked bar of cell type composition per region; passes domain_path to DomainVisualizer (loads CSV inside plot)."""
+        """Stacked bar of cell type composition per region from ``adata.obs[domain_key]``."""
         self._log("run_domain_cell_type_stacked_bar")
         if self.adata is None:
             raise ValueError("DomainAnalysis.run_domain_cell_type_stacked_bar requires adata")
         p = self._p(**overrides)
-        domain_path = p.get("domain_path")
-        if not domain_path:
-            raise ValueError("domain_path is required (path to domain CSV, e.g. cell_partitions.csv)")
+        domain_key = p.get("domain_key", "domain")
+        require_domain_obs(self.adata, domain_key)
         out = Path(p["save_path"]) if p.get("save_path") else (
             (self.output_path / "domain" / "domain_cell_type_stacked_bar.svg") if self.output_path else Path("domain_cell_type_stacked_bar.svg")
         )
         self._domain_viz.plot_domain_cell_type_stacked_bar(
             adata=self.adata,
-            domain_path=Path(domain_path),
-            domain_file_cell_id_column=p.get("domain_file_cell_id_column"),
-            domain_file_domain_column=p.get("domain_file_domain_column"),
+            domain_key=domain_key,
             cell_type_key=p["cell_type_key"],
             top_n_cell_types=p["top_n_cell_types"],
             save_path=out,
@@ -118,9 +113,6 @@ class SingleLevelAnalysis:
         "cell_type_key": "cell_type",
         "domain1": "0",
         "domain_key": "domain",
-        "domain_path": None,
-        "domain_file_cell_id_column": "cell_id",
-        "domain_file_domain_column": "cluster",
         "subcluster_lr_pair": ("Penk", "Oprk1"),
         "subcluster_min_cells_per_cluster": 50,
         "stacked_bar_top_n": 20,
@@ -203,27 +195,18 @@ class SingleLevelAnalysis:
         pos_edge_probs_np: np.ndarray,
     ) -> Optional[Tuple[AnnData, np.ndarray]]:
         """
-        Shared region filtering: load domain from domain_path if set, then subset to
-        regions_to_plot if set. Returns (adata, pos_edge_probs_np) or None when
-        regions_to_plot is set but no cells match (caller should return).
+        Subset to regions_to_plot when set. Requires ``adata.obs[domain_key]``.
+        Returns (adata, pos_edge_probs_np) or None when no cells match.
         """
-        domain_path = p.get("domain_path")
-        if domain_path is not None:
-            load_domain_from_csv(
-                adata,
-                domain_path=Path(domain_path),
-                cell_id_column=p["domain_file_cell_id_column"],
-                domain_column=p["domain_file_domain_column"],
-                domain_obs_key="domain",
-            )
+        domain_key = p.get("domain_key", "domain")
         regions_to_plot = p.get("regions_to_plot")
         if regions_to_plot is not None and len(regions_to_plot) > 0:
-            if "domain" not in adata.obs:
+            if domain_key not in adata.obs:
                 raise ValueError(
-                    "regions_to_plot requires domain_path (or adata.obs['domain']) to filter by region."
+                    f"regions_to_plot requires adata.obs[{domain_key!r}] to filter by region."
                 )
             regions_set = set(str(r) for r in regions_to_plot)
-            mask = adata.obs["domain"].astype(str).isin(regions_set).to_numpy()
+            mask = adata.obs[domain_key].astype(str).isin(regions_set).to_numpy()
             if not np.any(mask):
                 self._log(f"No cells in regions_to_plot {regions_to_plot}; skip.")
                 return None
@@ -241,8 +224,8 @@ class SingleLevelAnalysis:
         """
         Cell type×cell type communication heatmaps (total + per LR).
 
-        Optional region filtering: set domain_path and regions_to_plot; output path
-        is suffixed with region names when filtering.
+        Optional region filtering: set ``regions_to_plot``; requires ``adata.obs[domain_key]``.
+        Output path is suffixed with region names when filtering.
         """
         self._log("run_cell_type_heatmaps")
         p = self._p(**overrides)
@@ -407,7 +390,7 @@ class SingleLevelAnalysis:
         print(result["per_class"].to_string(index=False))
 
     def run_domain_domain_heatmaps(self, **overrides) -> None:
-        """Domain×domain communication heatmaps (total + per LR). Requires domain_path. Saves under ``domain_domain_heatmaps/`` as ``.svg``."""
+        """Domain×domain communication heatmaps (total + per LR). Requires ``adata.obs[domain_key]``."""
         self._log("run_domain_domain_heatmaps")
         p = self._p(**overrides)
         adata = p.get("adata", self.adata)
@@ -415,15 +398,16 @@ class SingleLevelAnalysis:
         edge_type_map = p.get("edge_type_map", self.edge_type_map)
         if adata is None or pos_edge_probs_np is None or edge_type_map is None:
             return
-        domain_path = p.get("domain_path")
-        if domain_path is None:
+        domain_key = p.get("domain_key", "domain")
+        if domain_key not in adata.obs:
+            self._log(f"Skip: domain_key '{domain_key}' not in adata.obs")
             return
         result = self._apply_region_filter(p, adata, pos_edge_probs_np)
         if result is None:
             return
         adata, pos_edge_probs_np = result
 
-        domains_arr = adata.obs["domain"].astype(str).to_numpy()
+        domains_arr = adata.obs[domain_key].astype(str).to_numpy()
         valid_mask = domains_arr != "unknown"
         if not np.any(valid_mask):
             return
@@ -439,7 +423,7 @@ class SingleLevelAnalysis:
             adata=adata,
             pos_edge_probs_np=pos_edge_probs_np,
             edge_type_map=edge_type_map,
-            domain_key="domain",
+            domain_key=domain_key,
             lr_filter=lr_filter,
             threshold=p["threshold"],
             save_dir=out,
@@ -509,18 +493,14 @@ class SingleLevelAnalysis:
         """
         LR spatial distribution with cells colored by region (domain).
 
-        Requires domain_path. Uses shared region filtering; optionally restrict
-        to regions_to_plot. Output path is suffixed with region names when filtering.
+        Requires ``adata.obs[domain_key]``. Optionally restrict to ``regions_to_plot``.
         """
         self._log("run_region_lr_spatial")
         p = self._p(**overrides)
-        domain_path = p.get("domain_path")
-        if domain_path is None:
-            raise ValueError(
-                "run_region_lr_spatial requires domain_path "
-                "(path to region CSV, e.g. cell_partitions.csv)"
-            )
+        domain_key = p.get("domain_key", "domain")
         adata = p.get("adata", self.adata)
+        if adata is not None:
+            require_domain_obs(adata, domain_key)
         pos_edge_probs_np = p.get("pos_edge_probs_np", self.pos_edge_probs_np)
         if adata is None or pos_edge_probs_np is None:
             return
@@ -538,28 +518,19 @@ class SingleLevelAnalysis:
             threshold=p["threshold"],
             figsize=p.get("figsize", (20, 16)),
             lr_filter=p["lr_filter"],
-            region_key="domain",
+            region_key=domain_key,
             regions_to_plot=None,
             max_outgoing_edges_per_node=p.get("max_outgoing_edges_per_node", 3),
             max_incoming_edges_per_node=p.get("max_incoming_edges_per_node", 3),
         )
 
     def run_domain_subclustering(self, **overrides) -> None:
-        """Domain subclustering (UMAP, spatial, DEG heatmap). If domain_path is set, load domain from CSV; else use annotation_key."""
+        """Domain subclustering (UMAP, spatial, DEG heatmap). Uses ``domain_key`` or ``annotation_key`` fallback."""
         self._log("run_domain1_subclustering")
         p = self._p(**overrides)
         adata = p.get("adata", self.adata)
-        domain_path = p.get("domain_path")
-        if domain_path is not None:
-            load_domain_from_csv(
-                adata,
-                domain_path=Path(domain_path),
-                cell_id_column=p["domain_file_cell_id_column"],
-                domain_column=p["domain_file_domain_column"],
-                domain_obs_key="domain",
-            )
-            domain_key = "domain"
-        else:
+        domain_key = p.get("domain_key", "domain")
+        if domain_key not in adata.obs:
             domain_key = p["annotation_key"]
         out = Path(p.get("output_path") or self.output_path) / f"{p['domain1']}_subclustering"
         self._differential.plot_domain1_subclustering_analysis(
@@ -586,9 +557,6 @@ class TreeLevelAnalysis:
         "min_count_threshold": 120,
         "cell_type_key": "cell_type",
         "domain_key": "domain",
-        "domain_path": None,
-        "domain_file_cell_id_column": "cell_id",
-        "domain_file_domain_column": "cluster",
         "alluvial_min_width_fraction": 0.01,
     }
 
@@ -654,9 +622,6 @@ class TreeLevelAnalysis:
             tree_level_results=res_list,
             hierarchy_dict=hierarchy_dict,
             domain_key=p.get("domain_key", "domain"),
-            domain_path=Path(p["domain_path"]) if p.get("domain_path") else None,
-            domain_file_cell_id_column=p.get("domain_file_cell_id_column", "cell_id"),
-            domain_file_domain_column=p.get("domain_file_domain_column", "cluster"),
             threshold=p.get("threshold", self._DEFAULTS["threshold"]),
             min_width_fraction=p.get("alluvial_min_width_fraction", 0.01),
             figsize=p.get("figsize", (8.0, 5.0)),
@@ -697,13 +662,12 @@ class TreeLevelAnalysis:
 
 
 class TimeSequenceAnalysis:
-    """Time-sequence analysis: alluvial plots and hierarchy-node bubble plots."""
+    """Cross-stage analysis from a combined or per-run ``cellstic_result.h5ad``."""
 
     _DEFAULTS = {
         "threshold": 0.0,
         "recompute": True,
         "region_lr_map": None,
-        "spatial_root": None,
         "cell_type_key": "cell_type",
         "top_n_cell_types": 10,
         "merge_celltypes_by_colon_prefix": True,
@@ -712,273 +676,170 @@ class TimeSequenceAnalysis:
         "strong_node_ks": [5, 10, 15],
         "font_size": None,
         "fig_format": "png",
+        "stage_key": "stage",
+        "organ_key": "organ",
     }
 
     def __init__(
         self,
-        stages: List[str],
-        raw_path: Path,
-        spatial_root: Path,
-        output_path: Path,
+        output_path: Union[str, Path],
+        *,
+        adata: Optional[AnnData] = None,
+        adata_path: Optional[Union[str, Path]] = None,
+        stages: Optional[List[str]] = None,
+        stage_key: str = "stage",
+        organ_key: str = "organ",
+        result_root: Optional[Union[str, Path]] = None,
+        adata_map: Optional[Dict[Tuple[str, str], AnnData]] = None,
         **kwargs,
     ):
-        self.stages = stages
-        self.raw_path = raw_path
-        self.spatial_root = spatial_root
-        self.output_path = Path(output_path) if output_path else None
+        from utils.time.cci_backend import CciSource
 
-        if self.output_path:
-            self.output_path.mkdir(parents=True, exist_ok=True)
-        self._params = {**self._DEFAULTS, **{k: v for k, v in kwargs.items() if v is not None}}
+        if adata is None and adata_path is not None:
+            import scanpy as sc
+
+            adata = sc.read_h5ad(Path(adata_path))
+        if adata is None and result_root is None and not adata_map:
+            raise ValueError("TimeSequenceAnalysis requires adata, adata_path, result_root, or adata_map.")
+
+        self.output_path = Path(output_path)
+        self.output_path.mkdir(parents=True, exist_ok=True)
+        params = {**self._DEFAULTS, **{k: v for k, v in kwargs.items() if v is not None}}
+        stage_key = params.pop("stage_key", stage_key)
+        organ_key = params.pop("organ_key", organ_key)
+        self._params = params
+
+        if adata is not None:
+            self._cci = CciSource.from_adata(adata, stage_key=stage_key, organ_key=organ_key)
+            self.stages = stages or self._cci.list_stages()
+        elif adata_map:
+            self._cci = CciSource(adata_map=adata_map)
+            if stages is None:
+                raise ValueError("stages is required when using adata_map.")
+            self.stages = stages
+        else:
+            self._cci = CciSource(result_root=result_root)
+            self.stages = stages or self._cci.list_stages()
+            if not self.stages:
+                raise ValueError("No stages found under result_root; pass stages explicitly.")
+
+    def _p(self, **overrides) -> Dict[str, Any]:
+        return _merge(self._params, overrides if overrides else None)
 
     def count_cell_number(self, **overrides) -> None:
-        """Delegate to time-series utility to count cells and plot over stages."""
         from utils.time.cell_number_over_stages import count_cell_number_over_stages
 
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-        p = _merge(self._params, overrides if overrides else None)
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-
-        print(f"[TimeSequenceAnalysis] Counting cell number over stages...")
+        p = self._p(**overrides)
         count_cell_number_over_stages(
             stages=self.stages,
-            raw_root=self.raw_path,
             output_dir=self.output_path / "cell_number_over_stages",
-            recompute=recompute,
+            cci_source=self._cci,
+            recompute=p["recompute"],
             annotation_filter=p.get("annotation_filter"),
             lr_filter=p.get("lr_filter"),
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
-        print(f"[TimeSequenceAnalysis] Cell number over stages counted and plotted.")
 
     def count_edge_number(self, **overrides) -> None:
-        """Delegate to time-series utility to count edges and plot over stages."""
         from utils.time.edge_number_over_stages import count_edge_number_over_stages
 
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-
+        p = self._p(**overrides)
         count_edge_number_over_stages(
             stages=self.stages,
-            raw_root=self.raw_path,
             output_dir=self.output_path / "edge_number_over_stages",
-            threshold=threshold,
-            recompute=recompute,
+            cci_source=self._cci,
+            threshold=p["threshold"],
+            recompute=p["recompute"],
             annotation_filter=p.get("annotation_filter"),
             lr_filter=p.get("lr_filter"),
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
-    
+
     def plot_ccdf_degree_strength(self, **overrides) -> None:
-        """
-        Compute and plot CCDF curves of degree and strength for CCI networks,
-        with optional caching of the underlying CCDF data.
-        """
-        import json
-        import pandas as pd
-
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        region_lr_map = p.get("region_lr_map")
-
-        # Compute and plot CCDF; the utility handles both cache and recompute modes.
+        p = self._p(**overrides)
         compute_save_and_plot_ccdf(
-            cci_root=self.raw_path,
             stages=self.stages,
-            region_lr_map=region_lr_map,
-            threshold=threshold,
+            region_lr_map=p["region_lr_map"],
+            threshold=p["threshold"],
             output_dir=self.output_path / "ccdf_degree_strength",
-            recompute=recompute,
-            verbose=True,
+            cci_source=self._cci,
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
-    
+
     def plot_efficiency_metrics(self, **overrides) -> None:
-        """
-            Compute and plot global efficiency, average shortest path, and modularity
-            per (organ, stage) with caching.
-        """
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        region_lr_map = p.get("region_lr_map")
-
+        p = self._p(**overrides)
         compute_save_and_plot_efficiency(
-            cci_root=self.raw_path,
-            spatial_root=self.spatial_root,
             stages=self.stages,
-            region_lr_map=region_lr_map,
-            threshold=threshold,
+            region_lr_map=p["region_lr_map"],
+            threshold=p["threshold"],
             output_dir=self.output_path / "efficiency_metrics",
-            recompute=recompute,
-            verbose=True,
+            cci_source=self._cci,
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
 
     def plot_strength_vs_distance_over_stages(self, **overrides) -> None:
-        """
-        For each organ, plot communication strength versus spatial distance across stages.
-
-        - One figure per organ.
-        - Within each figure, one line per stage for the organ-specific LR pair
-          provided in `region_lr_map`.
-        - Supports caching via CSV + JSON meta, and can be forced to recompute
-          by setting `recompute=True`.
-        """
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        region_lr_map = p.get("region_lr_map")
-
+        p = self._p(**overrides)
         compute_save_and_plot_strength_vs_distance(
-            cci_root=self.raw_path,
-            spatial_root=self.spatial_root,
             stages=self.stages,
-            region_lr_map=region_lr_map,
-            threshold=threshold,
+            region_lr_map=p["region_lr_map"],
+            threshold=p["threshold"],
             output_dir=self.output_path / "strength_vs_distance_over_stages",
-            recompute=recompute,
-            verbose=True,
+            cci_source=self._cci,
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
 
     def plot_celltype_strength_bars(self, **overrides) -> None:
-        """
-        Plot stacked bar charts of cell-type communication strength across stages.
-
-        - One figure per organ.
-        - Within each figure, bars correspond to stages and stacks to cell types.
-        - Uses region_lr_map to select the LR pair per organ, and cell types are
-          read from the spatial h5ad files via `cell_type_key`.
-        - Supports caching via CSV + JSON meta, and can be forced to recompute
-          by setting `recompute=True`.
-        """
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        region_lr_map = p.get("region_lr_map")
-        cell_type_key = p.get("cell_type_key", self._DEFAULTS["cell_type_key"])
-        top_n = p.get("top_n_cell_types", self._DEFAULTS["top_n_cell_types"])
-        merge_celltypes_by_colon_prefix = p.get(
-            "merge_celltypes_by_colon_prefix",
-            self._DEFAULTS["merge_celltypes_by_colon_prefix"],
-        )
-
-        if not region_lr_map:
-            raise ValueError(
-                "plot_celltype_strength_bars requires 'region_lr_map' mapping organ -> LR pair."
-            )
-
+        p = self._p(**overrides)
+        if not p.get("region_lr_map"):
+            raise ValueError("plot_celltype_strength_bars requires region_lr_map.")
         compute_save_and_plot_celltype_strength_over_stages(
-            cci_root=self.raw_path,
-            spatial_root=self.spatial_root,
             stages=self.stages,
-            region_lr_map=region_lr_map,
-            threshold=threshold,
+            region_lr_map=p["region_lr_map"],
+            threshold=p["threshold"],
             output_dir=self.output_path / "celltype_strength_over_stages",
-            cell_type_key=cell_type_key,
-            top_n=top_n,
-            merge_celltypes_by_colon_prefix=merge_celltypes_by_colon_prefix,
-            recompute=recompute,
-            verbose=True,
+            cci_source=self._cci,
+            cell_type_key=p["cell_type_key"],
+            top_n=p["top_n_cell_types"],
+            merge_celltypes_by_colon_prefix=p["merge_celltypes_by_colon_prefix"],
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
 
     def plot_graph_density_over_stages(self, **overrides) -> None:
-        """
-        Plot graph density curves over stages for selected LR pairs.
-
-        - One figure per LR pair (treated as "annotation").
-        - Within each figure, each organ is a line over stages.
-        - Supports caching via CSV + JSON meta and can be forced to recompute
-          by setting `recompute=True`.
-
-        Filters:
-            - annotation_filter: optional list of organs to include (e.g. ["Brain", "Liver"]).
-            - lr_filter: optional list of LR pairs (CSV stems) to include; if None, include all.
-        """
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        annotation_filter = p.get("annotation_filter")
-        lr_filter = p.get("lr_filter")
-
+        p = self._p(**overrides)
         compute_save_and_plot_density_over_stages(
             stages=self.stages,
-            raw_root=self.raw_path,
             output_dir=self.output_path / "graph_density_over_stages",
-            threshold=threshold,
-            annotation_filter=annotation_filter,
-            lr_filter=lr_filter,
-            recompute=recompute,
+            cci_source=self._cci,
+            threshold=p["threshold"],
+            annotation_filter=p.get("annotation_filter"),
+            lr_filter=p.get("lr_filter"),
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
 
     def plot_strong_nodes_over_stages(self, **overrides) -> None:
-        """
-        Plot strong-node contribution curves over stages for each organ.
-
-        - Uses region_lr_map to select a single LR pair per organ.
-        - For each (stage, organ), aggregates node strengths and computes the
-          fraction of total strength contributed by the top-K strongest nodes.
-        - By default, K in {5, 10, 15}, producing curves such as:
-              Brain Top 5 / 10 / 15 and Liver Top 5 / 10 / 15.
-        - Supports caching via CSV + JSON meta and can be forced to recompute
-          by setting `recompute=True`.
-        """
-        if self.output_path is None:
-            raise ValueError("TimeSequenceAnalysis requires output_path for saving figures.")
-
-        p = _merge(self._params, overrides if overrides else None)
-        threshold = p.get("threshold", self._DEFAULTS["threshold"])
-        recompute = p.get("recompute", self._DEFAULTS["recompute"])
-        region_lr_map = p.get("region_lr_map")
-        ks = p.get("strong_node_ks", self._DEFAULTS["strong_node_ks"])
-
-        if not region_lr_map:
-            raise ValueError(
-                "plot_strong_nodes_over_stages requires 'region_lr_map' mapping organ -> LR pair."
-            )
-
+        p = self._p(**overrides)
+        if not p.get("region_lr_map"):
+            raise ValueError("plot_strong_nodes_over_stages requires region_lr_map.")
         compute_save_and_plot_strong_nodes_over_stages(
-            cci_root=self.raw_path,
             stages=self.stages,
-            region_lr_map=region_lr_map,
-            threshold=threshold,
+            region_lr_map=p["region_lr_map"],
+            threshold=p["threshold"],
             output_dir=self.output_path / "strong_nodes_over_stages",
-            ks=ks,
-            recompute=recompute,
-            verbose=True,
+            cci_source=self._cci,
+            ks=p["strong_node_ks"],
+            recompute=p["recompute"],
             font_size=p.get("font_size"),
-            fig_format=p.get("fig_format", self._DEFAULTS["fig_format"]),
+            fig_format=p["fig_format"],
         )
-
-
-

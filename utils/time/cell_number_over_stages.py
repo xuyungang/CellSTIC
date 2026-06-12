@@ -198,45 +198,21 @@ def _plot_nature_line_chart_multi_series(
 
 def _compute_cell_counts_by_organ(
     stages: List[str],
-    raw_root: Path,
+    cci_source: "CciSource",
     annotation_filter: Optional[List[str]] = None,
     lr_filter: Optional[List[str]] = None,
 ) -> Tuple[List[str], Dict[str, List[int]]]:
-    """
-    Compute cell counts per stage per organ. Organs = subdirs under raw/<stage>/.
-    annotation_filter: only process these organs (e.g. ["Brain", "Liver"]).
-    lr_filter: only process CSVs whose stem matches (e.g. ["F2-F2r", "Lpar3-Adgre5"]).
-    Returns (ordered_stages, series) where series[organ] = [count for each stage].
-    """
     all_organs: set = set()
     stage_organ_counts: Dict[str, Dict[str, int]] = {}
     for stage in stages:
-        stage_dir = raw_root / stage
-        if not stage_dir.exists() or not stage_dir.is_dir():
-            continue
         organ_counts: Dict[str, int] = {}
-        for organ_dir in stage_dir.iterdir():
-            if not organ_dir.is_dir():
+        for organ in cci_source.list_organs(stage, annotation_filter):
+            if not cci_source.list_lr_stems(stage, organ, lr_filter):
                 continue
-            organ = organ_dir.name
-            if not time_filter.annotation_pass(organ, annotation_filter):
+            adata = cci_source.get_adata(stage, organ)
+            if adata is None:
                 continue
-            csv_files = list(organ_dir.glob("*.csv"))
-            if not csv_files:
-                continue
-            cell_ids = set()
-            for csv_path in csv_files:
-                if not time_filter.lr_match(csv_path.stem, lr_filter):
-                    continue
-                try:
-                    df_idx = pd.read_csv(csv_path, index_col=0, usecols=[0])
-                    header = pd.read_csv(csv_path, nrows=0).columns
-                    cell_ids.update(str(x).strip() for x in df_idx.index if str(x).strip() and str(x) != "nan")
-                    cell_ids.update(str(x).strip() for x in header if str(x).strip() and str(x) != "nan")
-                except Exception as e:
-                    print(f"{_LOG_PREFIX} Warning: failed to read {csv_path}: {e}")
-                    continue
-            organ_counts[organ] = len(cell_ids)
+            organ_counts[organ] = int(adata.n_obs)
             all_organs.add(organ)
         if organ_counts:
             stage_organ_counts[stage] = organ_counts
@@ -254,23 +230,15 @@ def _compute_cell_counts_by_organ(
 
 def count_cell_number_over_stages(
     stages: List[str],
-    raw_root: Union[str, Path],
     output_dir: Union[str, Path],
+    *,
+    cci_source,
     recompute: bool = True,
     annotation_filter: Optional[List[str]] = None,
     lr_filter: Optional[List[str]] = None,
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> None:
-    """
-    Count the number of unique cells per stage per organ. Organs = subdirs under
-    `raw_root/<stage>/` (e.g. Brain, Liver). Plots one curve per organ.
-    annotation_filter: only process these organs. lr_filter: only process matching LR pairs.
-
-    If recompute=False and cached data exists with matching stages and filters,
-    loads from cache and plots without re-reading CSVs.
-    """
-    raw_root = Path(raw_root)
     output_dir = _ensure_output_dir(output_dir)
     fig_ext = fig_format.lstrip(".")
     fig_name = f"cell_number_over_stages.{fig_ext}"
@@ -306,7 +274,7 @@ def count_cell_number_over_stages(
             print(f"{_LOG_PREFIX} Cache load failed: {e}; recomputing.")
 
     ordered_stages, series = _compute_cell_counts_by_organ(
-        stages, raw_root, annotation_filter, lr_filter
+        stages, cci_source, annotation_filter=annotation_filter, lr_filter=lr_filter,
     )
     if not ordered_stages:
         print(f"{_LOG_PREFIX} No cell counts computed; aborting plot.")

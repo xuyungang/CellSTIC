@@ -196,85 +196,34 @@ def _plot_nature_line_chart_multi_series(
     print(f"{_LOG_PREFIX} Plot saved: {output_path}")
 
 
-def _compute_edge_counts(
-    stages: List[str],
-    raw_root: Path,
-    threshold: float,
-) -> Tuple[List[str], List[int]]:
-    """Compute edge counts per stage; returns (ordered_stages, counts)."""
-    stage_edge_counts: Dict[str, int] = {}
-    for stage in stages:
-        stage_dir = raw_root / stage
-        if not stage_dir.exists():
-            print(f"[TimeSeriesMetrics] Warning: stage directory not found: {stage_dir}")
-            continue
-        csv_files = list(stage_dir.rglob("*.csv"))
-        if not csv_files:
-            print(f"[TimeSeriesMetrics] Warning: no CSV files found for stage {stage} in {stage_dir}")
-            continue
-        total_edges = 0
-        for csv_path in csv_files:
-            try:
-                df = pd.read_csv(csv_path, index_col=0, low_memory=False)
-                try:
-                    values = df.to_numpy(dtype=np.float32, copy=False)
-                except (TypeError, ValueError):
-                    values = df.to_numpy()
-                total_edges += int(np.count_nonzero(values > threshold))
-            except Exception as e:
-                print(f"[TimeSeriesMetrics] Warning: failed to read {csv_path}: {e}")
-                continue
-        stage_edge_counts[stage] = total_edges
-        print(f"[TimeSeriesMetrics] Stage {stage}: {total_edges} edges (>{threshold}).")
-    if not stage_edge_counts:
-        return [], []
-    ordered_stages = [s for s in stages if s in stage_edge_counts]
-    counts = [stage_edge_counts[s] for s in ordered_stages]
-    return ordered_stages, counts
+def _edge_count_from_dataframe(df: pd.DataFrame, threshold: float) -> int:
+    try:
+        values = df.to_numpy(dtype=np.float32, copy=False)
+    except (TypeError, ValueError):
+        values = df.to_numpy()
+    return int(np.count_nonzero(values > threshold))
 
 
 def _compute_edge_counts_by_organ_and_lr(
     stages: List[str],
-    raw_root: Path,
+    cci_source,
     threshold: float,
     annotation_filter: Optional[List[str]] = None,
     lr_filter: Optional[List[str]] = None,
 ) -> Dict[str, Tuple[List[str], Dict[str, List[int]]]]:
-    """
-    Compute edge counts per stage per organ per LR pair. Organs = subdirs under
-    raw/<stage>/; LR pair = CSV filename stem (e.g. F2_F2r).
-    annotation_filter: only process these organs. lr_filter: only process matching LR pairs.
-    Returns {organ: (ordered_stages, {lr_pair: [count per stage]})}.
-    """
-    result: Dict[str, Dict[str, Dict[str, int]]] = {}  # organ -> stage -> lr_pair -> count
+    result: Dict[str, Dict[str, Dict[str, int]]] = {}
     for i, stage in enumerate(stages, start=1):
         print(f"[TimeSeriesMetrics] Processing stage {stage} ({i}/{len(stages)})...")
-        stage_dir = raw_root / stage
-        if not stage_dir.exists() or not stage_dir.is_dir():
-            continue
-        for organ_dir in stage_dir.iterdir():
-            if not organ_dir.is_dir():
-                continue
-            organ = organ_dir.name
-            if not time_filter.annotation_pass(organ, annotation_filter):
-                continue
+        for organ in cci_source.list_organs(stage, annotation_filter):
             if organ not in result:
                 result[organ] = {}
             if stage not in result[organ]:
                 result[organ][stage] = {}
-            for csv_path in organ_dir.glob("*.csv"):
-                if not time_filter.lr_match(csv_path.stem, lr_filter):
+            for lr_stem in cci_source.list_lr_stems(stage, organ, lr_filter):
+                df = cci_source.load_cci_dataframe(stage, organ, lr_stem)
+                if df is None:
                     continue
-                lr_pair = csv_path.stem
-                try:
-                    df = pd.read_csv(csv_path, index_col=0, low_memory=False)
-                    try:
-                        values = df.to_numpy(dtype=np.float32, copy=False)
-                    except (TypeError, ValueError):
-                        values = df.to_numpy()
-                    result[organ][stage][lr_pair] = int(np.count_nonzero(values > threshold))
-                except Exception as e:
-                    print(f"[TimeSeriesMetrics] Warning: failed to read {csv_path}: {e}")
+                result[organ][stage][lr_stem] = _edge_count_from_dataframe(df, threshold)
     out: Dict[str, Tuple[List[str], Dict[str, List[int]]]] = {}
     for organ, stage_data in result.items():
         ordered_stages = [s for s in stages if s in stage_data]
@@ -294,8 +243,9 @@ def _compute_edge_counts_by_organ_and_lr(
 
 def count_edge_number_over_stages(
     stages: List[str],
-    raw_root: Union[str, Path],
     output_dir: Union[str, Path],
+    *,
+    cci_source,
     threshold: float = 0.0,
     recompute: bool = True,
     annotation_filter: Optional[List[str]] = None,
@@ -303,15 +253,6 @@ def count_edge_number_over_stages(
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> None:
-    """
-    Count the number of edges above threshold per stage per organ per LR pair.
-    One figure per organ; each figure has one curve per ligand-receptor pair.
-    annotation_filter: only process these organs. lr_filter: only process matching LR pairs.
-
-    If recompute=False and cached data exists with matching threshold, stages and filters,
-    loads from cache and plots without re-reading CSVs.
-    """
-    raw_root = Path(raw_root)
     output_dir = _ensure_output_dir(output_dir)
     fig_ext = fig_format.lstrip(".")
     data_path = output_dir / f"edge_number_over_stages{_DATA_SUFFIX}"
@@ -350,7 +291,8 @@ def count_edge_number_over_stages(
             print(f"[TimeSeriesMetrics] Cache load failed: {e}; recomputing.")
 
     per_organ = _compute_edge_counts_by_organ_and_lr(
-        stages, raw_root, threshold, annotation_filter, lr_filter
+        stages, cci_source, threshold,
+        annotation_filter=annotation_filter, lr_filter=lr_filter,
     )
     if not per_organ:
         print("[TimeSeriesMetrics] No edge counts computed; aborting plot.")

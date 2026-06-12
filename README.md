@@ -30,12 +30,11 @@ Run the tutorials from `notebook/`; each notebook adds the project root to `sys.
 |-----------|-------------|
 | `model/` | `CellSTIC`, HODGNN, graph construction, hierarchy tree |
 | `pipeline/` | Training, evaluation, analysis, and `run_cellstic` entry point |
-| `utils/` | Data preprocessing, loaders, analysis tools, metrics, viz |
+| `utils/` | Data preprocessing, analysis tools, metrics, viz |
 | `config/` | Experiment YAML configs |
 | `data/` | Raw and preprocessed data |
 | `component/` | Simulators and component-level modules (e.g. synthetic spatial patterns) |
 | `notebook/` | Step-by-step Jupyter tutorials (`.ipynb`) |
-| `cache/` | Runtime cache artifacts generated during experiments |
 
 ## Dependencies
 
@@ -50,9 +49,7 @@ See `requirements.txt` and `environment.yml` for details.
 
 ## Quick Start
 
-**Workflow**: load / preprocess `AnnData` → `run_cellstic` → `SingleLevelAnalysis.from_adata`. See `notebook/*.ipynb` and `data/<dataset>/README.md` for dataset-specific steps.
-
-Most datasets use **`utils.loader`** (`load_mouse_embryo`, `load_mouse_brain`, `load_human_lymph_node`, …). **scMultiSim** reads `raw/rna.h5ad` and `raw/atac.h5ad` directly and preprocesses in [`notebook/scmultisim.ipynb`](notebook/scmultisim.ipynb).
+**Workflow**: load / preprocess `AnnData` in the matching notebook → `run_cellstic` → `SingleLevelAnalysis.from_adata`. See `notebook/*.ipynb` and `data/<dataset>/README.md`.
 
 Each modality needs `obsm["feat"]`, `obsm["spatial"]`, and (recommended) `obsp["spatial_distances"]`.
 
@@ -60,30 +57,24 @@ Each modality needs `obsm["feat"]`, `obsm["spatial"]`, and (recommended) `obsp["
 from pathlib import Path
 import torch
 from pipeline import run_cellstic
-from utils.loader import load_mouse_embryo
 from utils.tools.seed_utils import set_global_seed
 
 set_global_seed()
 
-work_dir = Path("data/mouse_embryo/14.5")
-rna, lr = load_mouse_embryo(work_dir / "raw", preprocess_path=work_dir / "preprocess" / "Brain")
-
+# After loading/preprocessing in notebook/scmultisim.ipynb (or another tutorial):
 result = run_cellstic(
-    modality_datas=[rna],
-    ligand_receptor_map=lr,
-    model_path=work_dir / "model" / "Brain",
-    output_path=work_dir / "output" / "Brain",
+    modality_datas=[rna, atac],
+    ligand_receptor_map=lr_map,
+    model_path=Path("data/scmultisim/re1/model"),
+    output_path=Path("data/scmultisim/re1/result"),
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    auto_n_clusters=7,
 )
 
 from pipeline.analyzer import SingleLevelAnalysis
 
-analysis = SingleLevelAnalysis.from_adata(result.adata, output_path=work_dir / "output" / "Brain")
+analysis = SingleLevelAnalysis.from_adata(result.adata, output_path=Path("data/scmultisim/re1/analysis"))
 analysis.run_cell_type_heatmaps()
 ```
-
-For scMultiSim: multi-modal `[rna, atac]`, optional `config` / `lr_pair_type_constraints`, outputs under `result/` and `analysis/` — see the notebook.
 
 **Analysis** (`pipeline.analyzer`): `SingleLevelAnalysis`, `TreeLevelAnalysis`, `TimeSequenceAnalysis`, `DomainAnalysis`.
 
@@ -101,7 +92,8 @@ For Aliyun-based LLM tools (used only in optional helper utilities), edit `confi
 | `notebook/mouse_embryo.ipynb` | Mouse embryo Stereo-seq |
 | `notebook/mouse_brain.ipynb` | Mouse brain 5M |
 | `notebook/human_lymph_node.ipynb` | Human lymph node |
-| `notebook/axolotl_telencephalon.ipynb` | Axolotl telencephalon |
+| `notebook/axolotl_develop.ipynb` | Axolotl telencephalon (development) |
+| `notebook/axolotl_regene.ipynb` | Axolotl telencephalon (regeneration) |
 
 ## Feedback
 

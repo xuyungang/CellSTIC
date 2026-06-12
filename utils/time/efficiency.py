@@ -13,33 +13,20 @@ from utils.time.stage_axis import stage_axis_from_present
 from utils.viz.matplotlib_svg import savefig as savefig_vector
 
 
-def collect_edges_chunked(
-    csv_path: Path,
+def collect_edges_from_dataframe(
+    df: pd.DataFrame,
     threshold: float = 0.0,
-    chunksize: int = 5000,
-    verbose: bool = False,
 ) -> List[Tuple[str, str, float]]:
-    """Stream CCI CSV and collect edge list (source, target, weight) for weight > threshold (cell-level)."""
-    edge_list: List[Tuple[str, str, float]] = []
-    reader = pd.read_csv(csv_path, index_col=0, chunksize=chunksize)
-    chunk_idx = 0
-
-    for chunk in reader:
-        values = chunk.to_numpy()
-        mask = values > threshold
-
-        if mask.any():
-            row_idx, col_idx = np.where(mask)
-            src_labels = chunk.index.to_numpy()[row_idx].astype(str)
-            dst_labels = chunk.columns.to_numpy()[col_idx].astype(str)
-            weights = values[row_idx, col_idx].astype(float)
-            edge_list.extend(zip(src_labels, dst_labels, weights))
-
-        chunk_idx += 1
-        if verbose and chunk_idx % 50 == 0:
-            print(f"  ... {csv_path.name}: chunk {chunk_idx}", flush=True)
-
-    return edge_list
+    """Collect edge list from an in-memory CCI matrix."""
+    values = df.to_numpy()
+    mask = values > threshold
+    if not mask.any():
+        return []
+    row_idx, col_idx = np.where(mask)
+    src_labels = df.index.to_numpy()[row_idx].astype(str)
+    dst_labels = df.columns.to_numpy()[col_idx].astype(str)
+    weights = values[row_idx, col_idx].astype(float)
+    return list(zip(src_labels, dst_labels, weights))
 
 
 def _build_graphs(edge_list: List[Tuple[str, str, float]]):
@@ -76,47 +63,34 @@ def modularity_undir(G_undir) -> float:
 
 
 def run_efficiency_table(
-    cci_root: Path,
-    spatial_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
+    cci_source,
     threshold: float = 0.0,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """
-    Compute global efficiency, average shortest path, and modularity per (organ, stage).
-
-    - Spatial metrics are computed from Euclidean distances between cell coordinates
-      in preprocessed `.h5ad` files under:
-          spatial_root/<stage>/preprocess/<organ>/preprocessed_RNA_filtered.h5ad
-    - Modularity is computed from the CCC network built from CCI CSV matrices
-      under `cci_root/<stage>/<organ>/<lr>.csv` using region_lr_map to select LR per organ.
-    """
-    import scanpy as sc
     from scipy.spatial.distance import pdist
 
-    cci_root = Path(cci_root)
-    if not cci_root.exists():
-        raise FileNotFoundError(f"CCI root directory not found: {cci_root}")
-
-    spatial_root = Path(spatial_root)
-    regions = list(region_lr_map.keys())
     rows: List[Dict[str, object]] = []
-
     for stage in stages:
-        for region in regions:
-            # Expect organ-specific preprocessed file:
-            # spatial_root/<stage>/preprocess/<region>/preprocessed_RNA_filtered.h5ad
-            data_path = (
-                spatial_root
-                / str(stage)
-                / "preprocess"
-                / region
-                / "preprocessed_RNA_filtered.h5ad"
-            )
-            if not data_path.exists():
+        for region in region_lr_map:
+            adata = cci_source.get_adata(stage, region)
+            if adata is None or "spatial" not in adata.obsm_keys():
                 if verbose:
-                    print(f"Skip {stage}/{region}: h5ad not found at {data_path}", flush=True)
+                    print(f"Skip {stage}/{region}: missing AnnData or spatial coordinates", flush=True)
+                rows.append(
+                    {
+                        "organ": region,
+                        "stage": str(stage),
+                        "global_efficiency": np.nan,
+                        "average_shortest_path": np.nan,
+                        "modularity": np.nan,
+                    }
+                )
+                continue
+
+            coords = adata.obsm.get("spatial")
+            if coords is None or coords.shape[0] != adata.n_obs or adata.n_obs < 2:
                 rows.append(
                     {
                         "organ": region,
@@ -129,61 +103,7 @@ def run_efficiency_table(
                 continue
 
             if verbose:
-                print(f"Loading spatial data for {stage}/{region} from {data_path} ...", flush=True)
-            adata = sc.read_h5ad(data_path)
-
-            if "spatial" not in adata.obsm_keys():
-                if verbose:
-                    print(
-                        f"  Warning: missing 'spatial' for {stage}/{region}; skipping.",
-                        flush=True,
-                    )
-                rows.append(
-                    {
-                        "organ": region,
-                        "stage": str(stage),
-                        "global_efficiency": np.nan,
-                        "average_shortest_path": np.nan,
-                        "modularity": np.nan,
-                    }
-                )
-                continue
-
-            sub = adata
-            n_cells = sub.n_obs
-            if n_cells < 2:
-                rows.append(
-                    {
-                        "organ": region,
-                        "stage": str(stage),
-                        "global_efficiency": np.nan,
-                        "average_shortest_path": np.nan,
-                        "modularity": np.nan,
-                    }
-                )
-                continue
-
-            coords = sub.obsm.get("spatial")
-            if coords is None or coords.shape[0] != n_cells:
-                if verbose:
-                    print(
-                        f"  Warning: invalid 'spatial' coordinates for {region} at E{stage}; "
-                        "expected one coordinate per cell.",
-                        flush=True,
-                    )
-                rows.append(
-                    {
-                        "organ": region,
-                        "stage": str(stage),
-                        "global_efficiency": np.nan,
-                        "average_shortest_path": np.nan,
-                        "modularity": np.nan,
-                    }
-                )
-                continue
-
-            if verbose:
-                print(f"  Spatial metrics: E{stage} / {region} (n_cells={n_cells}) ...", flush=True)
+                print(f"  Spatial metrics: {stage} / {region} (n_cells={adata.n_obs}) ...", flush=True)
 
             dists = pdist(coords, metric="euclidean")
             finite_mask = np.isfinite(dists) & (dists > 0)
@@ -192,36 +112,15 @@ def run_efficiency_table(
                 asp = float("nan")
             else:
                 d_valid = dists[finite_mask]
-                inv_d = 1.0 / d_valid
-                ge = float(np.mean(inv_d))
+                ge = float(np.mean(1.0 / d_valid))
                 asp = float(np.mean(d_valid))
 
-            # Modularity from CCI network for this organ and stage.
-            lr = region_lr_map.get(region)
             mod = np.nan
+            lr = region_lr_map.get(region)
             if lr:
-                # Be robust to '-' vs '_' in LR names.
-                stage_dir = cci_root / str(stage) / region
-                candidate_names = [
-                    lr,
-                    lr.replace("-", "_"),
-                    lr.replace("_", "-"),
-                ]
-                csv_path: Optional[Path] = None
-                for name in candidate_names:
-                    p = stage_dir / f"{name}.csv"
-                    if p.exists():
-                        csv_path = p
-                        break
-                if csv_path and csv_path.exists():
-                    if verbose:
-                        print(
-                            f"  Loading CCI for modularity: E{stage} / {region} / {csv_path.name}",
-                            flush=True,
-                        )
-                    edge_list = collect_edges_chunked(
-                        csv_path, threshold=threshold, verbose=verbose
-                    )
+                df = cci_source.load_cci_for_lr_pair(stage, region, lr)
+                if df is not None:
+                    edge_list = collect_edges_from_dataframe(df, threshold=threshold)
                     if edge_list:
                         _, G_undir = _build_graphs(edge_list)
                         mod = modularity_undir(G_undir)
@@ -373,12 +272,12 @@ def plot_efficiency_lines(
 
 
 def compute_save_and_plot_efficiency(
-    cci_root: Path,
-    spatial_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
     threshold: float,
     output_dir: Path,
+    *,
+    cci_source,
     recompute: bool = False,
     verbose: bool = True,
     font_size: Optional[float] = None,
@@ -410,10 +309,9 @@ def compute_save_and_plot_efficiency(
             return True
 
     df = run_efficiency_table(
-        cci_root=cci_root,
-        spatial_root=spatial_root,
         stages=stages,
         region_lr_map=region_lr_map,
+        cci_source=cci_source,
         threshold=threshold,
         verbose=verbose,
     )

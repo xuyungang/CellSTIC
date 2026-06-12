@@ -1,4 +1,4 @@
-"""Tools: RNG seed helpers, Aliyun LLM, BGE embeddings, CellChatDB loader, CellTypist annotation."""
+"""Tools: RNG seed helpers, Aliyun LLM, BGE embeddings, CellChatDB loader, CellTypist annotation, spatial preprocessing."""
 
 from .aliyun_utils import AliyunLLMClient
 from .bge_utils import BGEEmbeddingUtils
@@ -11,6 +11,7 @@ from .cellchat_utils import (
 )
 from .celltypist_utils import CellTypistAnnotator, annotate_with_celltypist
 from .clustering_utils import ClusteringUtils, pca
+from .processor_utils import SpatialPreprocessorUtils
 from .seed_utils import active_base_seed, set_global_seed
 
 # Backward-compatible alias (class name in bge_utils is BGEEmbeddingUtils)
@@ -30,5 +31,6 @@ __all__ = [
     "parse_ligand_receptor",
     "retrieve_from_db",
     "set_global_seed",
+    "SpatialPreprocessorUtils",
     "pca",
 ]

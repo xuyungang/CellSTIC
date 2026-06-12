@@ -31,32 +31,16 @@ def _ensure_output_dir(output_dir: Path) -> Path:
     return out
 
 
-def _compute_density_for_csv(csv_path: Path, threshold: float) -> Optional[float]:
-    """
-    Compute graph density for a single CCI matrix.
-
-    We treat the matrix as a directed graph with possible self-loops removed:
-        density = E / (N * (N - 1))
-    where E is the number of entries > threshold and N is the number of nodes.
-    """
-    try:
-        df = pd.read_csv(csv_path, index_col=0, low_memory=False)
-    except Exception as e:
-        print(f"{_LOG_PREFIX} Warning: failed to read {csv_path}: {e}")
-        return None
+def _compute_density_for_dataframe(df: pd.DataFrame, threshold: float = 0.0) -> Optional[float]:
     if df.empty:
         return None
-
     try:
         values = df.to_numpy(dtype=np.float32, copy=False)
     except (TypeError, ValueError):
         values = df.to_numpy()
-
     n = values.shape[0]
     if n <= 1:
         return None
-
-    # Remove diagonal (self-loops) before counting edges.
     np.fill_diagonal(values, 0.0)
     e = int(np.count_nonzero(values > threshold))
     possible = n * (n - 1)
@@ -67,47 +51,24 @@ def _compute_density_for_csv(csv_path: Path, threshold: float) -> Optional[float
 
 def _compute_density_table(
     stages: List[str],
-    raw_root: Path,
+    cci_source,
     threshold: float,
     annotation_filter: Optional[List[str]] = None,
     lr_filter: Optional[List[str]] = None,
 ) -> pd.DataFrame:
-    """
-    Compute graph density per (stage, organ, lr_pair).
-
-    Returns a tidy DataFrame with columns:
-        stage, organ, lr_pair, density
-    """
-    raw_root = Path(raw_root)
     rows: List[Dict[str, object]] = []
-
     for i, stage in enumerate(stages, start=1):
         print(f"{_LOG_PREFIX} Processing stage {stage} ({i}/{len(stages)})...")
-        stage_dir = raw_root / str(stage)
-        if not stage_dir.exists() or not stage_dir.is_dir():
-            continue
-
-        for organ_dir in stage_dir.iterdir():
-            if not organ_dir.is_dir():
-                continue
-            organ = organ_dir.name
-            if not time_filter.annotation_pass(organ, annotation_filter):
-                continue
-
-            for csv_path in organ_dir.glob("*.csv"):
-                if not time_filter.lr_match(csv_path.stem, lr_filter):
+        for organ in cci_source.list_organs(stage, annotation_filter):
+            for lr_stem in cci_source.list_lr_stems(stage, organ, lr_filter):
+                df = cci_source.load_cci_dataframe(stage, organ, lr_stem)
+                if df is None:
                     continue
-                lr_pair = csv_path.stem
-                density = _compute_density_for_csv(csv_path, threshold=threshold)
+                density = _compute_density_for_dataframe(df, threshold=threshold)
                 if density is None:
                     continue
                 rows.append(
-                    {
-                        "stage": str(stage),
-                        "organ": organ,
-                        "lr_pair": lr_pair,
-                        "density": density,
-                    }
+                    {"stage": str(stage), "organ": organ, "lr_pair": lr_stem, "density": density}
                 )
 
     if not rows:
@@ -252,8 +213,9 @@ def _load_density_from_cache(
 
 def compute_save_and_plot_density_over_stages(
     stages: List[str],
-    raw_root: Path,
     output_dir: Path,
+    *,
+    cci_source,
     threshold: float = 0.0,
     annotation_filter: Optional[List[str]] = None,
     lr_filter: Optional[List[str]] = None,
@@ -261,19 +223,6 @@ def compute_save_and_plot_density_over_stages(
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> bool:
-    """
-    High-level helper: compute and plot graph density curves over stages.
-
-    - stages: list of embryonic stages (strings or numbers, e.g. ["9.5", "10.5", ...]).
-    - raw_root: root directory containing CCI CSVs: raw_root/<stage>/<organ>/*.csv
-    - Each figure corresponds to one LR pair (lr_filter defines which to include).
-    - Within a figure, each organ is a line over stages.
-
-    Caching:
-        - Density values are cached to CSV + JSON meta in `output_dir`.
-        - When recompute=False and the meta matches (stages, threshold, filters),
-          plots will be regenerated from cached density values.
-    """
     output_dir = _ensure_output_dir(output_dir)
     data_path = output_dir / f"density_over_stages{_DATA_SUFFIX}"
     meta_path = output_dir / f"density_over_stages{_META_SUFFIX}"
@@ -302,7 +251,7 @@ def compute_save_and_plot_density_over_stages(
     # Recompute
     df = _compute_density_table(
         stages=stages,
-        raw_root=raw_root,
+        cci_source=cci_source,
         threshold=threshold,
         annotation_filter=annotation_filter,
         lr_filter=lr_filter,

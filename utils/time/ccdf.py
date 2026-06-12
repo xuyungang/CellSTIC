@@ -12,53 +12,19 @@ import pandas as pd
 from utils.viz.matplotlib_svg import savefig as savefig_vector
 
 
-def compute_degree_strength_chunked(
-    csv_path: Path,
+def compute_degree_strength_from_dataframe(
+    df: pd.DataFrame,
     threshold: float = 0.0,
-    chunksize: int = 5000,
-    verbose: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute per-node out-degree, in-degree, out-strength, in-strength from CCI matrix.
-    Returns (k_out, k_in, s_out, s_in) as 1d arrays.
-    """
-    out_degree: Dict[str, float] = {}
-    in_degree: Dict[str, float] = {}
-    out_strength: Dict[str, float] = {}
-    in_strength: Dict[str, float] = {}
-    col_order: Optional[List[str]] = None
-
-    reader = pd.read_csv(csv_path, index_col=0, chunksize=chunksize)
-    chunk_idx = 0
-    for chunk in reader:
-        if col_order is None:
-            col_order = list(chunk.columns)
-            for c in col_order:
-                in_degree[c] = 0.0
-                in_strength[c] = 0.0
-        for idx, row in chunk.iterrows():
-            out_degree[idx] = float((row > threshold).sum())
-            out_strength[idx] = float(row.sum())
-        for c in chunk.columns:
-            in_degree[c] += float((chunk[c] > threshold).sum())
-            in_strength[c] += float(chunk[c].sum())
-        chunk_idx += 1
-        if verbose and chunk_idx % 50 == 0:
-            print(f"  ... {csv_path.name}: chunk {chunk_idx}", flush=True)
-
-    if col_order is None:
-        return (
-            np.array([], dtype=np.float64),
-            np.array([], dtype=np.float64),
-            np.array([], dtype=np.float64),
-            np.array([], dtype=np.float64),
-        )
-
-    row_order = list(out_degree.keys())
-    k_out = np.array([out_degree[i] for i in row_order], dtype=np.float64)
-    s_out = np.array([out_strength[i] for i in row_order], dtype=np.float64)
-    k_in = np.array([in_degree[c] for c in col_order], dtype=np.float64)
-    s_in = np.array([in_strength[c] for c in col_order], dtype=np.float64)
+    """Compute per-node degree/strength from an in-memory CCI matrix."""
+    try:
+        values = df.to_numpy(dtype=np.float32, copy=False)
+    except (TypeError, ValueError):
+        values = df.to_numpy()
+    k_out = (values > threshold).sum(axis=1).astype(np.float64)
+    k_in = (values > threshold).sum(axis=0).astype(np.float64)
+    s_out = values.sum(axis=1).astype(np.float64)
+    s_in = values.sum(axis=0).astype(np.float64)
     return k_out, k_in, s_out, s_in
 
 
@@ -80,98 +46,45 @@ def ccdf_curve(values: np.ndarray, min_val: Optional[float] = None) -> Tuple[np.
 
 
 def compute_ccdf_rows_for_networks(
-    cci_root: Path,
     stages: List[str],
-    organs: Optional[List[str]] = None,
+    cci_source,
+    region_lr_map: Dict[str, str],
     threshold: float = 0.0,
     verbose: bool = True,
-    region_lr_map: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Load degree/strength and CCDF curves for each (organ, stage).
-    cci_root/<stage>/<organ>/*.csv is assumed (same layout as time-series utilities).
-    """
-    cci_root = Path(cci_root)
-    if not cci_root.exists():
-        raise FileNotFoundError(f"CCI root directory not found: {cci_root}")
-
-    # If a region->LR map is provided, derive organs from its keys.
-    if region_lr_map is not None:
-        organs = sorted(region_lr_map.keys())
-
-    # Infer organs from directory structure if not explicitly provided
-    if organs is None:
-        organ_set = set()
-        for stage in stages:
-            stage_dir = cci_root / str(stage)
-            if not stage_dir.exists():
-                continue
-            for d in stage_dir.iterdir():
-                if d.is_dir():
-                    organ_set.add(d.name)
-        organs = sorted(organ_set)
-
+    organs = sorted(region_lr_map.keys())
     results: List[Dict[str, Any]] = []
     for stage in stages:
         for organ in organs:
-            stage_dir = cci_root / str(stage) / organ
-            if not stage_dir.exists():
-                if verbose:
-                    print(f"Skip (missing organ dir): {stage}/{organ}", flush=True)
-                continue
-
-            # Determine which LR CSV to use for this organ
-            if region_lr_map is None:
-                raise ValueError("region_lr_map must be provided for CCDF computation.")
             lr_pair = region_lr_map.get(organ)
             if not lr_pair:
                 continue
-
-            # Be robust to '-' vs '_' in LR names, e.g. F2-F2r vs F2_F2r
-            candidate_names = [
-                lr_pair,
-                lr_pair.replace("-", "_"),
-                lr_pair.replace("_", "-"),
-            ]
-            csv_paths = []
-            for name in candidate_names:
-                path = stage_dir / f"{name}.csv"
-                if path.exists():
-                    csv_paths = [path]
-                    break
-            if not csv_paths:
+            df = cci_source.load_cci_for_lr_pair(stage, organ, lr_pair)
+            if df is None:
                 if verbose:
-                    print(f"Skip (missing LR CSV): {stage_dir}/{lr_pair}.csv", flush=True)
+                    print(f"Skip (missing LR matrix): {stage}/{organ}/{lr_pair}", flush=True)
                 continue
-
-            for csv_path in csv_paths:
-                if not csv_path.exists():
-                    if verbose:
-                        print(f"Skip (missing): {csv_path}", flush=True)
-                    continue
-                if verbose:
-                    print(f"Load: {stage} / {organ} / {csv_path.stem} ...", flush=True)
-                k_out, k_in, s_out, s_in = compute_degree_strength_chunked(
-                    csv_path, threshold=threshold, verbose=verbose
-                )
-                eps = 1e-12
-                metric_curves = {
-                    "k_out": ccdf_curve(k_out, min_val=0.5),
-                    "k_in": ccdf_curve(k_in, min_val=0.5),
-                    "s_out": ccdf_curve(s_out, min_val=eps),
-                    "s_in": ccdf_curve(s_in, min_val=eps),
-                }
-                for metric, (x, y) in metric_curves.items():
-                    for xi, yi in zip(x, y):
-                        results.append(
-                            {
-                                "organ": organ,
-                                "stage": stage,
-                                "metric": metric,
-                                "x": xi,
-                                "y": yi,
-                            }
-                        )
+            if verbose:
+                print(f"Load: {stage} / {organ} / {lr_pair} ...", flush=True)
+            k_out, k_in, s_out, s_in = compute_degree_strength_from_dataframe(df, threshold=threshold)
+            eps = 1e-12
+            metric_curves = {
+                "k_out": ccdf_curve(k_out, min_val=0.5),
+                "k_in": ccdf_curve(k_in, min_val=0.5),
+                "s_out": ccdf_curve(s_out, min_val=eps),
+                "s_in": ccdf_curve(s_in, min_val=eps),
+            }
+            for metric, (x, y) in metric_curves.items():
+                for xi, yi in zip(x, y):
+                    results.append(
+                        {
+                            "organ": organ,
+                            "stage": stage,
+                            "metric": metric,
+                            "x": xi,
+                            "y": yi,
+                        }
+                    )
     return results
 
 
@@ -304,11 +217,12 @@ def plot_ccdf_from_df(
 
 
 def compute_save_and_plot_ccdf(
-    cci_root: Path,
     stages: List[str],
-    region_lr_map: Optional[Dict[str, str]],
+    region_lr_map: Dict[str, str],
     threshold: float,
     output_dir: Path,
+    *,
+    cci_source,
     recompute: bool = False,
     verbose: bool = True,
     font_size: Optional[float] = None,
@@ -344,11 +258,11 @@ def compute_save_and_plot_ccdf(
 
     # Fallback to recomputing from raw CSVs
     rows = compute_ccdf_rows_for_networks(
-        cci_root=cci_root,
         stages=stages,
+        cci_source=cci_source,
+        region_lr_map=region_lr_map,
         threshold=threshold,
         verbose=verbose,
-        region_lr_map=region_lr_map,
     )
     if not rows:
         print("[CCDF] No CCDF data computed; skipping plot.")

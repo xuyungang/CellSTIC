@@ -18,84 +18,30 @@ import pandas as pd
 from utils.time.stage_axis import stage_axis_from_present
 from utils.viz.matplotlib_svg import savefig as savefig_vector
 
-from utils.time.strength_vs_distance import _find_cci_csv_for_organ_lr
-
 
 _LOG_PREFIX = "[CellTypeStrengthOverStages]"
 
 
-def _load_cell_type_mapping_from_h5ad(
-    spatial_root: Path,
-    stage: str,
-    organ: str,
-    cell_type_key: str = "cell_type",
-    verbose: bool = True,
-) -> Dict[str, str]:
-    """
-    Load cell_id -> cell_type mapping from the standard spatial h5ad:
-        spatial_root/<stage>/preprocess/<organ>/preprocessed_RNA_filtered.h5ad
-    """
-    import scanpy as sc
-
-    data_path = (
-        spatial_root
-        / str(stage)
-        / "preprocess"
-        / organ
-        / "preprocessed_RNA_filtered.h5ad"
-    )
-    if not data_path.exists():
-        if verbose:
-            print(f"{_LOG_PREFIX} Skip {stage}/{organ}: h5ad not found at {data_path}")
-        return {}
-
-    adata = sc.read_h5ad(data_path)
+def _cell_type_mapping_from_adata(adata, cell_type_key: str) -> Dict[str, str]:
     if cell_type_key not in adata.obs:
-        if verbose:
-            print(
-                f"{_LOG_PREFIX} Warning: '{cell_type_key}' not in adata.obs for {stage}/{organ}; skipping.",
-                flush=True,
-            )
         return {}
-
     cell_types = adata.obs[cell_type_key].astype(str)
-    mapping: Dict[str, str] = {
+    return {
         str(cid): str(ct)
         for cid, ct in zip(adata.obs_names, cell_types.values)
         if str(ct) not in ("nan", "")
     }
-    if verbose:
-        print(
-            f"{_LOG_PREFIX} Loaded cell types for {stage}/{organ} "
-            f"(n_cells_with_type={len(mapping)})",
-            flush=True,
-        )
-    return mapping
 
 
-def _aggregate_cci_by_cell_type(
-    csv_path: Path,
+def _aggregate_cci_matrix_by_cell_type(
+    mat: pd.DataFrame,
     cell_to_type: Dict[str, str],
     threshold: float = 0.0,
     verbose: bool = True,
+    source_label: str = "CCI matrix",
 ) -> Dict[str, float]:
-    """
-    Aggregate a cell×cell CCI matrix to cell-type total strength:
-        strength_total[cell_type] = s_out_ct + s_in_ct
-
-    where:
-        s_out_ct = sum of outgoing weights from cells of this type
-        s_in_ct  = sum of incoming weights to cells of this type
-    """
-    try:
-        mat = pd.read_csv(csv_path, index_col=0)
-    except Exception as e:
-        print(f"{_LOG_PREFIX} Warning: failed to read {csv_path}: {e}")
-        return {}
     if mat.empty:
         return {}
-
-    # Intersect cells with available type annotation
     rows = mat.index.astype(str)
     cols = mat.columns.astype(str)
     row_mask = np.array([r in cell_to_type for r in rows])
@@ -103,29 +49,20 @@ def _aggregate_cci_by_cell_type(
     if not row_mask.any() or not col_mask.any():
         if verbose:
             print(
-                f"{_LOG_PREFIX} No overlap between CCI cells and cell_type mapping for {csv_path}",
+                f"{_LOG_PREFIX} No overlap between CCI cells and cell_type mapping for {source_label}",
                 flush=True,
             )
         return {}
-
     mat = mat.loc[rows[row_mask], cols[col_mask]]
     if mat.empty:
         return {}
-
     rows = mat.index.to_numpy(dtype=str)
     cols = mat.columns.to_numpy(dtype=str)
     values = mat.to_numpy(dtype=float)
-
-    # Apply threshold
     values = np.where(values > threshold, values, 0.0)
-
-    # Out-going strength per source cell
     out_per_cell = values.sum(axis=1)
-    # In-going strength per target cell
     in_per_cell = values.sum(axis=0)
-
     strength_total: Dict[str, float] = {}
-    # Accumulate by cell_type
     for cid, s_out in zip(rows, out_per_cell):
         ct = cell_to_type.get(cid)
         if ct is None:
@@ -136,70 +73,35 @@ def _aggregate_cci_by_cell_type(
         if ct is None:
             continue
         strength_total[ct] = strength_total.get(ct, 0.0) + float(s_in)
-
     return strength_total
 
 
 def compute_celltype_strength_table_over_stages(
-    cci_root: Path,
-    spatial_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
+    cci_source,
     threshold: float = 0.0,
     cell_type_key: str = "cell_type",
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """
-    Compute total communication strength per cell type for each (stage, organ).
-
-    Returns a tidy DataFrame with columns:
-        organ, stage, cell_type, strength_total
-    where strength_total = s_out_ct + s_in_ct for that cell type.
-    """
-    cci_root = Path(cci_root)
-    spatial_root = Path(spatial_root)
-    if not cci_root.exists():
-        raise FileNotFoundError(f"CCI root directory not found: {cci_root}")
-
     rows: List[Dict[str, object]] = []
 
     for stage in stages:
         for organ, lr_pair in region_lr_map.items():
-            csv_path = _find_cci_csv_for_organ_lr(
-                cci_root=cci_root,
-                stage=str(stage),
-                organ=organ,
-                lr_pair=lr_pair,
-            )
-            if csv_path is None:
+            adata = cci_source.get_adata(str(stage), organ)
+            if adata is None:
+                continue
+            cell_to_type = _cell_type_mapping_from_adata(adata, cell_type_key)
+            mat = cci_source.load_cci_for_lr_pair(str(stage), organ, lr_pair)
+            if mat is None or not cell_to_type:
                 if verbose:
-                    print(
-                        f"{_LOG_PREFIX} Skip (missing CCI): {stage} / {organ} / {lr_pair}.csv",
-                        flush=True,
-                    )
+                    print(f"{_LOG_PREFIX} Skip: {stage} / {organ} / {lr_pair}", flush=True)
                 continue
-
             if verbose:
-                print(
-                    f"{_LOG_PREFIX} Aggregate CCI by cell type: {stage} / {organ} / {lr_pair}",
-                    flush=True,
-                )
-
-            cell_to_type = _load_cell_type_mapping_from_h5ad(
-                spatial_root=spatial_root,
-                stage=str(stage),
-                organ=organ,
-                cell_type_key=cell_type_key,
-                verbose=verbose,
-            )
-            if not cell_to_type:
-                continue
-
-            strength_total = _aggregate_cci_by_cell_type(
-                csv_path=csv_path,
-                cell_to_type=cell_to_type,
-                threshold=threshold,
-                verbose=verbose,
+                print(f"{_LOG_PREFIX} Aggregate: {stage} / {organ} / {lr_pair}", flush=True)
+            strength_total = _aggregate_cci_matrix_by_cell_type(
+                mat, cell_to_type, threshold=threshold, verbose=verbose,
+                source_label=f"{stage}/{organ}/{lr_pair}",
             )
             if not strength_total:
                 continue
@@ -442,12 +344,12 @@ def _merge_celltypes_by_colon_prefix(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_save_and_plot_celltype_strength_over_stages(
-    cci_root: Path,
-    spatial_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
     threshold: float,
     output_dir: Path,
+    *,
+    cci_source,
     cell_type_key: str = "cell_type",
     top_n: int = 10,
     merge_celltypes_by_colon_prefix: bool = True,
@@ -456,16 +358,6 @@ def compute_save_and_plot_celltype_strength_over_stages(
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> bool:
-    """
-    End-to-end helper:
-
-    - For each (stage, organ), read the CCI matrix and cell-type annotations.
-    - Aggregate communication strength to cell-type level.
-    - Cache the long-format table and re-plot from cache if possible.
-    - Plot, for each organ, a stacked bar chart across stages.
-    """
-    cci_root = Path(cci_root)
-    spatial_root = Path(spatial_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -498,10 +390,9 @@ def compute_save_and_plot_celltype_strength_over_stages(
             return True
 
     df = compute_celltype_strength_table_over_stages(
-        cci_root=cci_root,
-        spatial_root=spatial_root,
         stages=stages,
         region_lr_map=region_lr_map,
+        cci_source=cci_source,
         threshold=threshold,
         cell_type_key=cell_type_key,
         verbose=verbose,

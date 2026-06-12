@@ -19,78 +19,25 @@ from utils.viz.matplotlib_svg import savefig as savefig_vector
 _LOG_PREFIX = "[StrengthDistance]"
 
 
-def _find_cci_csv_for_organ_lr(
-    cci_root: Path,
-    stage: str,
-    organ: str,
-    lr_pair: str,
-) -> Optional[Path]:
-    """
-    Robustly resolve the CCI CSV path for a given (stage, organ, lr_pair),
-    being tolerant to '-' vs '_' in LR names.
-    """
-    stage_dir = cci_root / str(stage) / organ
-    if not stage_dir.exists():
-        return None
-
-    candidates = [
-        lr_pair,
-        lr_pair.replace("-", "_"),
-        lr_pair.replace("_", "-"),
-    ]
-    for stem in candidates:
-        path = stage_dir / f"{stem}.csv"
-        if path.exists():
-            return path
-    return None
-
-
-def _load_spatial_coords(
-    spatial_root: Path,
-    stage: str,
-    organ: str,
-    verbose: bool = True,
-) -> Optional[pd.DataFrame]:
-    """
-    Load spatial coordinates for a given (stage, organ) from
-    spatial_root/<stage>/preprocess/<organ>/preprocessed_RNA_filtered.h5ad.
-    Returns a DataFrame with index=cell_id and columns ['x', 'y'] (or ['x', 'y', 'z']).
-    """
-    import scanpy as sc
-
-    data_path = (
-        spatial_root
-        / str(stage)
-        / "preprocess"
-        / organ
-        / "preprocessed_RNA_filtered.h5ad"
-    )
-    if not data_path.exists():
-        if verbose:
-            print(f"{_LOG_PREFIX} Skip {stage}/{organ}: h5ad not found at {data_path}")
-        return None
-
-    adata = sc.read_h5ad(data_path)
+def _spatial_coords_from_adata(adata, verbose: bool = True) -> Optional[pd.DataFrame]:
     if "spatial" not in adata.obsm_keys():
         if verbose:
-            print(f"{_LOG_PREFIX} Warning: missing 'spatial' for {stage}/{organ}; skipping.")
+            print(f"{_LOG_PREFIX} Warning: missing 'spatial' in AnnData; skipping.")
         return None
-
     coords = adata.obsm.get("spatial")
     if coords is None or coords.shape[0] != adata.n_obs:
         if verbose:
-            print(
-                f"{_LOG_PREFIX} Warning: invalid 'spatial' coordinates for {stage}/{organ}; "
-                "expected one coordinate per cell."
-            )
+            print(f"{_LOG_PREFIX} Warning: invalid 'spatial' coordinates; skipping.")
         return None
-
     df = pd.DataFrame(coords, index=adata.obs_names)
+    if df.shape[1] >= 2:
+        df = df.iloc[:, :2]
+        df.columns = ["x", "y"]
     return df
 
 
 def _collect_strength_distance_pairs(
-    cci_csv: Path,
+    cci_matrix: pd.DataFrame,
     coords: pd.DataFrame,
     threshold: float,
     max_points: int = 5000,
@@ -105,12 +52,7 @@ def _collect_strength_distance_pairs(
     """
     from scipy.spatial.distance import cdist
 
-    try:
-        mat = pd.read_csv(cci_csv, index_col=0)
-    except Exception as e:
-        print(f"{_LOG_PREFIX} Warning: failed to read {cci_csv}: {e}")
-        return np.array([]), np.array([])
-
+    mat = cci_matrix
     if mat.empty:
         return np.array([]), np.array([])
 
@@ -298,28 +240,17 @@ def _plot_strength_distance_per_organ(
 
 
 def compute_save_and_plot_strength_vs_distance(
-    cci_root: Path,
-    spatial_root: Path,
     stages: List[str],
     region_lr_map: Dict[str, str],
     threshold: float,
     output_dir: Path,
+    *,
+    cci_source,
     recompute: bool = False,
     verbose: bool = True,
     font_size: Optional[float] = None,
     fig_format: str = "png",
 ) -> bool:
-    """
-    End-to-end helper:
-
-    - For each (stage, organ), read the CCI matrix and spatial coordinates.
-    - Collect all edges with weight > threshold as (distance, strength) points
-      (optionally subsampled).
-    - Save a long-format CSV + JSON meta describing the parameters.
-    - Plot, for each organ, a "scatter + fitted curve" figure across stages.
-    """
-    cci_root = Path(cci_root)
-    spatial_root = Path(spatial_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -344,34 +275,18 @@ def compute_save_and_plot_strength_vs_distance(
     rows = []
     for stage in stages:
         for organ, lr_pair in region_lr_map.items():
-            cci_csv = _find_cci_csv_for_organ_lr(
-                cci_root=cci_root,
-                stage=str(stage),
-                organ=organ,
-                lr_pair=lr_pair,
-            )
-            if cci_csv is None:
-                if verbose:
-                    print(
-                        f"{_LOG_PREFIX} Skip: no CCI CSV for {stage}/{organ}/{lr_pair} under {cci_root}"
-                    )
+            adata = cci_source.get_adata(str(stage), organ)
+            if adata is None:
                 continue
-
-            coords = _load_spatial_coords(
-                spatial_root=spatial_root,
-                stage=str(stage),
-                organ=organ,
-                verbose=verbose,
-            )
-            if coords is None:
+            coords = _spatial_coords_from_adata(adata, verbose=verbose)
+            mat = cci_source.load_cci_for_lr_pair(str(stage), organ, lr_pair)
+            if mat is None or coords is None:
+                if verbose:
+                    print(f"{_LOG_PREFIX} Skip: {stage}/{organ}/{lr_pair}")
                 continue
 
             d_valid, w_valid = _collect_strength_distance_pairs(
-                cci_csv=cci_csv,
-                coords=coords,
-                threshold=threshold,
-                max_points=5000,
-                verbose=verbose,
+                mat, coords, threshold=threshold, max_points=5000, verbose=verbose,
             )
             if d_valid.size == 0:
                 continue

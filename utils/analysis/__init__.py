@@ -1,6 +1,6 @@
 """Analysis: CCC visualization, community detection, differential, network metrics, radar/heatmap, etc."""
 
-from .domain_viz import DomainVisualizer, load_domain_from_csv
+from .domain_viz import DomainVisualizer, require_domain_obs
 from .cell_type_communication import CellTypeCommunicationComputer
 from .differential_analysis import DifferentialAnalyzer, detect_communities_louvain
 from .aggregated_heatmap_viz import AggregatedHeatmapVisualizer
@@ -16,7 +16,7 @@ from .alluvial_icicle_viz import (
 
 __all__ = [
     "DomainVisualizer",
-    "load_domain_from_csv",
+    "require_domain_obs",
     "CellTypeCommunicationComputer",
     "DifferentialAnalyzer",
     "AggregatedHeatmapVisualizer",
