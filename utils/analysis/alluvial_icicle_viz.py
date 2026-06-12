@@ -9,7 +9,6 @@ from anndata import AnnData
 
 from .aggregated_heatmap_viz import AggregatedHeatmapVisualizer
 from .alluvial_viz import (
-    AlluvialVisualizer as LinearAlluvialVisualizer,
     _build_leaf_to_group_map,
     _sanitize_filename as _sanitize_filename_alluvial,
     _sorted_level_keys,
@@ -200,9 +199,8 @@ def _compute_leaf_strengths_per_cell_type_pair(
     return strengths_per_pair, leaf_names, base_dir
 
 
-def _render_alluvial_pair_plots(
+def _render_icicle_pair_plot(
     *,
-    linear: LinearAlluvialVisualizer,
     radial: RadialAlluvialVisualizer,
     strength_dict: Dict[str, float],
     leaf_names: List[str],
@@ -215,24 +213,8 @@ def _render_alluvial_pair_plots(
     dpi: int,
     high_contrast: bool,
     stable_order_level_keys: Optional[Iterable[str]],
-    show_legend: bool = False,
 ) -> None:
-    """Render both linear alluvial and radial icicle-style plots for one pair."""
-    linear._plot_alluvial_core(  # type: ignore[attr-defined]
-        leaf_strengths=strength_dict,
-        leaf_names=leaf_names,
-        level_keys=level_keys,
-        leaf_to_group=leaf_to_group,
-        title=title,
-        save_path=save_path,
-        min_width_fraction=min_width_fraction,
-        figsize=figsize,
-        dpi=dpi,
-        high_contrast=high_contrast,
-        stable_order_level_keys=stable_order_level_keys,
-        show_legend=show_legend,
-    )
-
+    """Render radial icicle-style hierarchy plot for one pair."""
     radial._plot_alluvial_core(  # type: ignore[attr-defined]
         leaf_strengths=strength_dict,
         leaf_names=leaf_names,
@@ -262,10 +244,9 @@ def _plot_alluvial_pair_collection(
     dpi: int,
     high_contrast: bool,
     stable_order_level_keys: Optional[Iterable[str]],
-    linear: LinearAlluvialVisualizer,
     radial: RadialAlluvialVisualizer,
 ) -> None:
-    """Render alluvial/icicle pair plots in batch."""
+    """Render icicle pair plots in batch."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for (src, tgt), strength_dict in strengths_per_pair.items():
         total = sum(strength_dict.values())
@@ -274,8 +255,7 @@ def _plot_alluvial_pair_collection(
         title = f"{src} → {tgt}" if show_title else ""
         fname = f"{prefix}_{_sanitize_filename_alluvial(src)}_to_{_sanitize_filename_alluvial(tgt)}.svg"
         save_path = out_dir / fname
-        _render_alluvial_pair_plots(
-            linear=linear,
+        _render_icicle_pair_plot(
             radial=radial,
             strength_dict=strength_dict,
             leaf_names=leaf_names,
@@ -346,10 +326,8 @@ def plot_alluvial_and_icicle_per_domain(
     high_contrast: bool = True,
 ) -> None:
     """
-    Render both linear alluvial and radial icicle-style hierarchy plots
-    for domain–domain communication using the same inputs.
+    Render radial icicle-style hierarchy plots for domain–domain communication.
     """
-    linear = LinearAlluvialVisualizer()
     radial = RadialAlluvialVisualizer()
 
     leaf_strengths_per_pair, leaf_names, default_base_dir, _adata = _compute_leaf_strengths_per_domain_pair(
@@ -397,7 +375,6 @@ def plot_alluvial_and_icicle_per_domain(
         dpi=dpi,
         high_contrast=high_contrast,
         stable_order_level_keys=stable_order_level_keys,
-        linear=linear,
         radial=radial,
     )
 
@@ -418,10 +395,8 @@ def plot_alluvial_and_icicle_per_cell_type_pair(
     high_contrast: bool = True,
 ) -> None:
     """
-    Render both linear alluvial and radial icicle-style hierarchy plots
-    for each (source, target) cell-type pair using the same inputs.
+    Render radial icicle-style hierarchy plots for each (source, target) cell-type pair.
     """
-    linear = LinearAlluvialVisualizer()
     radial = RadialAlluvialVisualizer()
 
     strengths_per_pair, leaf_names, default_base_dir = _compute_leaf_strengths_per_cell_type_pair(
@@ -458,7 +433,6 @@ def plot_alluvial_and_icicle_per_cell_type_pair(
         dpi=dpi,
         high_contrast=high_contrast,
         stable_order_level_keys=stable_order_level_keys,
-        linear=linear,
         radial=radial,
     )
 

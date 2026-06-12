@@ -16,17 +16,21 @@ Liu, Y., DiStasio, M., Su, G. et al. High-plex protein and whole transcriptome c
 
 ## Raw data layout
 
-Use **`data/human_tonsil/`** in this CellSTIC repository as the dataset root. `raw/` must include modality subfolders. `utils.loader.load_human_tonsil` reads TSVs from `raw/rna/` and `raw/adt/` by default (`rna/GSM6578062_humantonsil_RNA.tsv`, `adt/GSM6578071_humantonsil_protein.tsv` in the loader), or you can place pre-built `rna.h5ad` and `adt.h5ad` under `preprocess/` to skip TSV assembly.
+Use **`data/human_tonsil/`** as the dataset root. Place two aligned AnnData objects under **`raw/`**:
+
+- `raw/rna.h5ad`
+- `raw/adt.h5ad`
+
+Each file should share the same spot barcodes (`obs_names`), include `obsm['spatial']`, and spot coordinates can be parsed from barcodes of the form `{x}x{y}`. This dataset has no cell-type annotation in `obs`. Preprocessing (gene filtering, HVG, PCA/CLR, spatial distance matrix) is done in the analysis notebook on every run; no `preprocess/` cache is required.
+
+Original GEO TSVs (optional, for building the h5ad files): `rna/GSM6578062_humantonsil_RNA.tsv`, `adt/GSM6578071_humantonsil_protein.tsv`.
 
 ```
 data/human_tonsil/
 ├── raw/
-│   ├── rna/          # e.g. GSM6578062_humantonsil_RNA.tsv
-│   ├── adt/          # e.g. GSM6578071_humantonsil_protein.tsv
-│   ├── spatial/      # if required by your workflow
-│   └── domain/       # optional; include markers/ etc. as in the reference tree
-├── preprocess/
-├── config/
-├── model/
-└── output/
+│   ├── rna.h5ad
+│   └── adt.h5ad
+├── model/            # trained CellSTIC checkpoints
+├── result/           # cellstic_result.h5ad
+└── analysis/         # figures
 ```

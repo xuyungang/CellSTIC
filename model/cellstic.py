@@ -6,7 +6,14 @@ import torch
 import torch.nn as nn
 from scipy.spatial.distance import cdist
 
-from utils.train import ModelConfig, EdgeFilterUtils
+from model.train import (
+    CellSTICCCCConfig,
+    CellSTICFeatConfig,
+    CellSTICGraphConfig,
+    CellSTICModelConfig,
+    CellSTICTreeConfig,
+    EdgeFilterUtils,
+)
 
 from .hodgnn import HODGNN
 from .tree import BalancedHierarchyBuilder, BiologicalHierarchyBuilder, LLMHierarchyBuilder
@@ -18,7 +25,7 @@ from .graph import (
 )
 
 class CellSTIC(nn.Module):
-    def __init__(self, config: ModelConfig, device: torch.device):
+    def __init__(self, config: CellSTICModelConfig, device: torch.device):
         """
         Initialize CellSTIC model.
 
@@ -29,40 +36,33 @@ class CellSTIC(nn.Module):
         super().__init__()
         self.config = config
         self.device = device
-        feat_config = getattr(config, "feat", None) or getattr(config, "feature", None)
-        enc_dims = getattr(feat_config, "encoder_dims", None) if feat_config else None
-        if enc_dims and isinstance(enc_dims, list) and len(enc_dims) > 0 and isinstance(enc_dims[0], list):
-            self.num_modality = len(enc_dims)
-        else:
-            self.num_modality = 2
+        if not config.feat.encoder_dims:
+            raise ValueError(
+                "CellSTICModelConfig.feat.encoder_dims is empty. "
+                "Call build_config(modality_datas) before constructing CellSTIC."
+            )
+        self.num_modality = len(config.feat.encoder_dims)
 
-        # Get common dropout from model config
-        dropout = getattr(config, 'dropout', 0.1)
-
-        # Initialize components (config.ccc, config.feat, config.graph, config.tree)
-        self.ccc_predictor = CCC_Predicor(getattr(config, 'ccc', None), self.device, dropout, self.num_modality)
-        self.feat_integrator = Feat_Integrator(getattr(config, 'feat', None), self.device, dropout)
-        self.graph_generator = Graph_Generator(getattr(config, 'graph', None), self.device)
-        self.tree_builder = Tree_Builder(getattr(config, 'tree', None), self.device)
+        dropout = config.dropout
+        self.ccc_predictor = CCC_Predicor(config.ccc, self.device, dropout, self.num_modality)
+        self.feat_integrator = Feat_Integrator(config.feat, self.device, dropout)
+        self.graph_generator = Graph_Generator(config.graph, self.device)
+        self.tree_builder = Tree_Builder(config.tree, self.device)
 
     def forward(self, g, h, e):
         pass
 
 
 class CCC_Predicor(nn.Module):
-    def __init__(self, config: ModelConfig, device: torch.device, dropout: float, n_modalities: int):
+    def __init__(self, config: CellSTICCCCConfig, device: torch.device, dropout: float, n_modalities: int):
         super().__init__()
         self.config = config
         self.device = device
         self.dropout = dropout
 
-        # Get config parameters
-        self.encoder_dims = getattr(config, 'encoder_dims')
-        self.decoder_dims = getattr(config, 'decoder_dims')
-        self.decoder_head = getattr(config, 'decoder_head')
-        # Temperature for sigmoid: <1 sharper probs; >1 flattens toward 0.5
-        t = getattr(config, 'temperature', 0.4) if config else 0.4
-        self.temperature = 0.4 if t is None else float(t)
+        self.encoder_dims = config.encoder_dims
+        self.decoder_dims = config.decoder_dims
+        self.temperature = float(config.temperature)
         self.n_modalities = n_modalities
         self.encoder_edge_dim = 5 + self.n_modalities
         # EGNN layers (internal edge dim = encoder_edge_dim)
@@ -183,14 +183,14 @@ class CCC_Predicor(nn.Module):
         return pos_edge_probs, neg_edge_probs, edge_type_predictions, fused_features
 
 class Feat_Integrator(nn.Module):
-    def __init__(self, config: ModelConfig, device: torch.device, dropout: float):
+    def __init__(self, config: CellSTICFeatConfig, device: torch.device, dropout: float):
         super().__init__()
         self.config = config
         self.device = device
         self.dropout = dropout
-        self.encoder_dims = getattr(config, 'encoder_dims')
-        self.decoder_dims = getattr(config, 'decoder_dims', None)
-        self.output_dims = getattr(config, 'output_dims')
+        self.encoder_dims = config.encoder_dims
+        self.decoder_dims = config.decoder_dims
+        self.output_dims = config.output_dims
         enc_dims = self.encoder_dims
         dec_dims = self.decoder_dims
         self.num_modality = len(enc_dims)
@@ -256,17 +256,16 @@ class Feat_Integrator(nn.Module):
         return x
 
 class Graph_Generator(nn.Module):
-    def __init__(self, config: ModelConfig, device: torch.device):
+    def __init__(self, config: CellSTICGraphConfig, device: torch.device):
         super().__init__()
         self.config = config
         self.device = device
 
-        # Get config parameters (distance_threshold computed from spatial data; high expression = ≥expression_percentile)
-        self.cluster_size = getattr(config, 'cluster_size')
-        self.clustering_top_k = getattr(config, 'cluster_top_k')
-        self.knn_top_k = getattr(config, 'knn_top_k')
-        self.expression_percentile = getattr(config, 'expression_percentile', 75)  # default 75th (upper quartile)
-        self.n_spots = getattr(config, 'n_spots', 10)
+        self.cluster_size = config.cluster_size
+        self.clustering_top_k = config.cluster_top_k
+        self.knn_top_k = config.knn_top_k
+        self.expression_percentile = config.expression_percentile
+        self.n_spots = config.n_spots
 
     def forward(self) -> None:
         """
@@ -356,13 +355,11 @@ class Graph_Generator(nn.Module):
         return out
 
 class Tree_Builder(nn.Module):
-    def __init__(self, config: ModelConfig, device: torch.device):
+    def __init__(self, config: CellSTICTreeConfig, device: torch.device):
         super().__init__()
         self.config = config
         self.device = device
-
-        # Get config parameters
-        self.hierarchy_method = getattr(config, 'hierarchy_method')
+        self.hierarchy_method = config.hierarchy_method
 
     def forward(self, edge_type_map: dict, method: str, cell_chat_db: Optional[Dict] = None) -> Dict[str, List[Dict]]:
         """

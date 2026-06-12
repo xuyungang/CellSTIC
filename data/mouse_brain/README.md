@@ -19,22 +19,27 @@ Guo, P., Mao, L., Chen, Y. et al. Multiplexed spatial mapping of chromatin featu
 
 ## Raw data layout
 
-Use **`data/mouse_brain/`** in this CellSTIC repository as the dataset root. `utils.loader.load_mouse_brain` expects 10x-style or exported multimodal inputs under **`raw/`**. PeakMatrix CSVs may also live under matching subfolders in `preprocess/` (see `docs/mouse_brain.ipynb`).
+Use **`data/mouse_brain/`** as the dataset root. The tutorial [`notebook/mouse_brain.ipynb`](../../notebook/mouse_brain.ipynb) reads five aligned AnnData objects directly from **`raw/`**:
+
+- `raw/rna.h5ad`
+- `raw/adt.h5ad`
+- `raw/atac.h5ad`
+- `raw/h3k27ac.h5ad`
+- `raw/h3k27me3.h5ad`
+
+Each file should share the same cell barcodes (`obs_names`), include `obsm['spatial']`, and RNA should include `obs['cell_type']`. Preprocessing (HVG, PCA/LSI, spatial distance matrix) is done in the notebook; no cached `preprocess/` step is required.
+
+Ligand–receptor pairs are passed manually in the notebook configuration (default: `Cd200–Cd200r4`, `Col6a3–Sdc4`, `Penk–Oprk1`).
 
 ```
 data/mouse_brain/
 ├── raw/
-│   ├── rna/          # e.g. 10x matrix.mtx.gz (+ features.tsv.gz, barcodes.tsv.gz); or preprocess/rna.h5ad
-│   ├── adt/          # e.g. matrix.mtx.gz, features.tsv.gz, barcodes.tsv.gz
-│   ├── atac/         # e.g. GSM8494157_5M_20um_ATAC_PeakMatrix.csv (loader reads preprocess/atac/ by default)
-│   ├── h3k27ac/      # e.g. GSM8494157_5M_20um_H3K27ac_PeakMatrix.csv
-│   ├── h3k27me3/     # e.g. GSM8494157_5M_20um_H3K27me3_PeakMatrix.csv
-│   ├── spatial/      # e.g. tissue_positions_list.csv
-│   ├── domain/       # optional; auxiliary domain assets
-│   ├── l-r/LR.csv    # optional ligand–receptor table
-│   └── type/         # optional; e.g. rna_10xWholeMouseBrain(CCN20230722)_CorrelationMapping_UTC_1769068788450.csv
-├── preprocess/       # cached h5ad, GeneScore / PeakMatrix CSVs, etc.
-├── config/
-├── model/
-└── output/
+│   ├── rna.h5ad
+│   ├── adt.h5ad
+│   ├── atac.h5ad
+│   ├── h3k27ac.h5ad
+│   └── h3k27me3.h5ad
+├── model/            # trained CellSTIC checkpoints
+├── result/           # cellstic_result.h5ad
+└── analysis/         # figures (lr_spatial/, spatial_heatmaps/, lr_pair_stacked_bar.svg, …)
 ```

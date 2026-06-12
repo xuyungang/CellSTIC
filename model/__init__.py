@@ -2,7 +2,8 @@
 
 from .hodgnn import HODGNN
 from . import graph
+from . import train
 from . import tree
 from .cellstic import CellSTIC
 
-__all__ = ['HODGNN', 'graph', 'tree', 'CellSTIC']
+__all__ = ['HODGNN', 'graph', 'train', 'tree', 'CellSTIC']

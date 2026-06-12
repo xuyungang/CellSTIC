@@ -10,6 +10,7 @@ from .cellchat_utils import (
     retrieve_from_db,
 )
 from .celltypist_utils import CellTypistAnnotator, annotate_with_celltypist
+from .clustering_utils import ClusteringUtils, pca
 from .seed_utils import active_base_seed, set_global_seed
 
 # Backward-compatible alias (class name in bge_utils is BGEEmbeddingUtils)
@@ -21,6 +22,7 @@ __all__ = [
     "BGEEmbeddingsUtils",
     "CellChatDBLoader",
     "CellTypistAnnotator",
+    "ClusteringUtils",
     "active_base_seed",
     "annotate_with_celltypist",
     "get_metadata_from_db",
@@ -28,4 +30,5 @@ __all__ = [
     "parse_ligand_receptor",
     "retrieve_from_db",
     "set_global_seed",
+    "pca",
 ]

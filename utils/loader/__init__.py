@@ -9,7 +9,6 @@ from .human_tonsil import load_human_tonsil
 from .mouse_brain import load_mouse_brain, load_mouse_brain_gene_scores
 from .mouse_embryo import load_mouse_embryo
 from .nsf import load_nsf, load_true_labels
-from .scmultisim import load_scmultisim
 from .axolotl_telencephalon import load_axolotl_telencephalon
 
 __all__ = [
@@ -21,6 +20,5 @@ __all__ = [
     "load_mouse_embryo",
     "load_nsf",
     "load_true_labels",
-    "load_scmultisim",
     "load_axolotl_telencephalon",
 ]

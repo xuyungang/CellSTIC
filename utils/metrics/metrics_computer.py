@@ -1,5 +1,5 @@
 """
-Metrics visualization: one entity aggregating CCC (ROC-PR + CSV) and Region (spatial + UMAP + metrics + CSV).
+Metrics: CCC CSV export and Region (spatial + UMAP + metrics + CSV).
 """
 
 from pathlib import Path
@@ -8,14 +8,11 @@ import numpy as np
 import pandas as pd
 import torch
 import anndata as ad
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
-from sklearn.metrics import roc_auc_score, average_precision_score
-
-from utils.train.clustering_utils import ClusteringUtils
+from utils.tools.clustering_utils import ClusteringUtils
 from utils.metrics.clust_metrics import ClusteringMetrics
 from utils.metrics.f1_metrics import F1MetricsComputer
-from utils.metrics.roc_pr_viz import MetricsCurveVisualizer
 from utils.metrics.umap_viz import UMAPVisualizer
 from utils.metrics.spatial_viz import SpatialVisualizer
 from utils.metrics.palette_utils import get_custom_palette
@@ -23,118 +20,44 @@ from utils.metrics.palette_utils import get_custom_palette
 
 class MetricsComputer:
     """
-    Single entry for metrics computation: CCC (ROC-PR + matrix CSV) and Region (spatial + UMAP + metrics + CSV).
+    Single entry for metrics computation: CCC CSV metrics and Region (spatial + UMAP + metrics + CSV).
     """
 
     @staticmethod
-    def plot_roc_pr_and_save_csv(
+    def save_roc_pr_metrics_csv(
         pos_edge_probs: Union[torch.Tensor, np.ndarray],
         label: Optional[Union[torch.Tensor, np.ndarray]] = None,
         save_dir: Union[str, Path] = ".",
         title: Optional[str] = None,
-        csv_name: str = "roc_pr_matrix.csv",
         lr_pair_names: Optional[List[str]] = None,
-        cell_names: Optional[List[str]] = None,
         eval_mask: Optional[np.ndarray] = None,
         f1_threshold: float = 0.5,
         f1_search_optimal_threshold: bool = True,
-        export_matrix_csv: bool = True,
-    ) -> None:
+    ) -> Optional[Dict[str, pd.DataFrame]]:
         """
-        Draw ROC-PR curve, save matrix CSV, and compute F1/ACC/AUC/AUPRC (CCC).
-        Saves: figure, .npz curve data, optionally 2D prob matrix CSV per channel, f1_summary.csv, f1_per_class.csv.
-        eval_mask: optional (n, n, m) bool; if provided, only mask==True entries are used for ROC/PR (e.g. exclude self-edges).
-        export_matrix_csv: if True, export per-channel probability matrices to CSV in ccc/; set False when caller already saves them (e.g. evaluator uses pos_probs_dense/).
+        Compute CCC metrics vs ground truth and save CSVs under ``metrics/``.
 
-        Behavior:
-        - When export_matrix_csv is True, export per-channel probability matrices to CSV for diagnostics.
-        - Only when labels are provided, compute ROC/PR curves and supervised metrics (F1 / AUC / AUPRC).
+        Saves: ``f1_summary.csv``, ``f1_per_class.csv`` (includes per-LR auroc/auprc).
+        Returns DataFrames for summary and per-class metrics.
         """
         save_dir = Path(save_dir)
-        # CCC outputs (ROC/PR curves + per-channel CSV/NPZ) should live under `<output_root>/ccc/`.
-        # The caller may still store dense probability matrices under `pos_probs_dense/` for diagnostics,
-        # but ROC/PR assets themselves are requested to be grouped into `ccc/`.
-        ccc_dir = save_dir / "ccc"
-        ccc_dir.mkdir(parents=True, exist_ok=True)
-        fig_path = ccc_dir / "roc_pr.png"
-        npz_path = fig_path.with_suffix("").__str__() + "_data.npz"
+        metrics_dir = save_dir / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
 
         probs_arr = np.asarray(pos_edge_probs)
-
-        # 1) Optionally export per-channel probability matrices (skip when caller already saves e.g. pos_probs_dense/)
-        if export_matrix_csv and probs_arr.ndim == 3:
-            n, _, m = probs_arr.shape
-            base_path = save_dir / csv_name
-            stem = base_path.stem
-            suffix = base_path.suffix or ".csv"
-            index = cell_names if (cell_names is not None and len(cell_names) == n) else None
-
-            def _safe_name(s: str) -> str:
-                return str(s).replace(":", "_").replace("/", "_").replace(" ", "_").strip() or "channel"
-
-            for k in range(m):
-                # Save 2D matrix (n x n) per channel, with row/col = cell names if provided
-                mat_k = np.asarray(probs_arr[:, :, k], dtype=float)
-                mat_k[~np.isfinite(mat_k)] = np.nan
-
-                channel_label = _safe_name(lr_pair_names[k]) if lr_pair_names and k < len(lr_pair_names) else str(k)
-                out_path = ccc_dir / f"{stem}_{channel_label}{suffix}"
-                df = pd.DataFrame(mat_k, index=index, columns=index)
-                df.to_csv(out_path, index=True)
-                print(f"ROC-PR matrix (channel {k}) saved to {out_path}")
-
-        # 2) If no label, skip ROC/PR curve and supervised metrics computation
         if label is None:
-            return
-        label_arr = np.asarray(label)
-        if label_arr.size == 0:
-            return
-        labels_arr = np.asarray(label_arr)
-        if eval_mask is not None and eval_mask.shape == probs_arr.shape:
-            probs_1d = probs_arr[eval_mask]
-            label_1d = labels_arr[eval_mask]
-        else:
-            probs_1d = probs_arr.reshape(-1)
-            label_1d = labels_arr.reshape(-1)
-        MetricsCurveVisualizer.plot_roc_pr_combined(
-            probs_1d,
-            label_1d,
-            save_path=str(fig_path),
-            title=title,
-            save_data_path=npz_path,
-        )
+            return None
+        labels_arr = np.asarray(label)
+        if labels_arr.size == 0:
+            return None
 
-        # Per-channel AUC/AP for diagnosis (when multi-channel)
-        if probs_arr.ndim == 3 and eval_mask is not None and eval_mask.shape == probs_arr.shape:
-            n, _, m = probs_arr.shape
-            per_channel_rows = []
-            for k in range(m):
-                pm = eval_mask[:, :, k]
-                pk = probs_arr[:, :, k][pm]
-                lk = labels_arr[:, :, k][pm]
-                valid = np.isfinite(pk) & np.isfinite(lk)
-                if valid.sum() > 0 and lk[valid].sum() > 0 and lk[valid].sum() < valid.sum():
-                    auc_k = roc_auc_score(lk[valid], pk[valid])
-                    ap_k = average_precision_score(lk[valid], pk[valid])
-                else:
-                    auc_k, ap_k = np.nan, np.nan
-                ch_name = lr_pair_names[k] if lr_pair_names and k < len(lr_pair_names) else str(k)
-                per_channel_rows.append({"channel": ch_name, "roc_auc": auc_k, "average_precision": ap_k})
-            if per_channel_rows:
-                pd.DataFrame(per_channel_rows).to_csv(ccc_dir / "roc_pr_per_channel.csv", index=False)
-                print("Per-channel ROC/AP saved to ccc/roc_pr_per_channel.csv")
-
-        probs_arr = np.asarray(pos_edge_probs)
-
-        # Strict: require same 3D shape (n, n, m)
         if probs_arr.shape != labels_arr.shape or probs_arr.ndim != 3:
             raise ValueError(
                 f"Expected probs and labels with same 3D shape (n, n, m), "
                 f"got probs {probs_arr.shape}, labels {labels_arr.shape}"
             )
 
-        # F1/ACC (best threshold) + per-class AUC/AUPRC
-        F1MetricsComputer.compute_and_save(
+        f1_result = F1MetricsComputer.compute_and_save(
             pos_edge_probs,
             labels_arr,
             save_dir=save_dir,
@@ -144,6 +67,26 @@ class MetricsComputer:
             eval_mask=eval_mask,
             search_optimal_threshold=f1_search_optimal_threshold,
         )
+        summary_row = {
+            "macro_f1": f1_result["summary"]["macro_f1"],
+            "macro_accuracy": f1_result["summary"]["macro_accuracy"],
+            "threshold": f1_threshold,
+            "macro_auroc": f1_result["summary"].get("macro_auroc"),
+            "macro_auprc": f1_result["summary"].get("macro_auprc"),
+        }
+        if title is not None:
+            summary_row["name"] = title
+        if "best_threshold" in f1_result["summary"]:
+            summary_row["best_threshold"] = f1_result["summary"]["best_threshold"]
+            summary_row["macro_f1_best"] = f1_result["summary"]["macro_f1_best"]
+            summary_row["macro_accuracy_best"] = f1_result["summary"]["macro_accuracy_best"]
+
+        return {
+            "summary": pd.DataFrame([summary_row]),
+            "per_class": pd.DataFrame(f1_result["per_class_rows"]),
+        }
+
+    plot_roc_pr_and_save_csv = save_roc_pr_metrics_csv
 
     @staticmethod
     def run_region_umap_metrics_export(

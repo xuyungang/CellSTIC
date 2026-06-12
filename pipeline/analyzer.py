@@ -24,6 +24,7 @@ from utils.analysis import (
     plot_alluvial_and_icicle_per_cell_type_pair,
     plot_alluvial_and_icicle_per_domain,
 )
+from utils.metrics import MetricsComputer
 from utils.time.ccdf import compute_save_and_plot_ccdf
 from utils.time.efficiency import compute_save_and_plot_efficiency
 from utils.time.strength_vs_distance import compute_save_and_plot_strength_vs_distance
@@ -161,6 +162,32 @@ class SingleLevelAnalysis:
 
     def _log(self, message: str) -> None:
         print(f"[SingleLevelAnalysis] {message}")
+
+    @classmethod
+    def from_adata(
+        cls,
+        adata: AnnData,
+        output_path: Union[str, Path],
+        level_num: Optional[int] = None,
+        **kwargs,
+    ) -> "SingleLevelAnalysis":
+        """Build analyzer from a self-contained CellSTIC AnnData bundle."""
+        from pipeline.runner import single_level_from_adata
+        from model.train.data import ccc_ground_from_adata
+
+        pos_edge_probs_np, edge_type_map = single_level_from_adata(adata, level_num=level_num)
+        params = dict(kwargs)
+        if "ccc_ground" not in params:
+            ground = ccc_ground_from_adata(adata)
+            if ground is not None:
+                params["ccc_ground"] = ground
+        return cls(
+            adata=adata,
+            pos_edge_probs_np=pos_edge_probs_np,
+            edge_type_map=edge_type_map,
+            output_path=Path(output_path),
+            **params,
+        )
 
     def _resolve_lr_filter(self, p: Dict[str, Any], edge_type_map: Optional[Dict[str, int]]) -> List[str]:
         """When lr_filter is None, default to all keys in edge_type_map; otherwise lr_filter or []."""
@@ -341,6 +368,43 @@ class SingleLevelAnalysis:
             save_path=out / "spot_level_metrics.svg",
             **extra_kwargs,
         )
+
+    def run_roc_pr_metrics(self, **overrides) -> None:
+        """Compute ROC/AUC and F1 metrics vs ground-truth CCC (requires ``ccc_ground``)."""
+        self._log("run_roc_pr_metrics")
+        p = self._p(**overrides)
+        ccc_ground = p.get("ccc_ground")
+        if ccc_ground is None:
+            return
+
+        adata = p.get("adata", self.adata)
+        pos_edge_probs_np = p.get("pos_edge_probs_np", self.pos_edge_probs_np)
+        edge_type_map = p.get("edge_type_map", self.edge_type_map)
+        if adata is None or pos_edge_probs_np is None or edge_type_map is None:
+            return
+
+        n_cells, _, n_types = pos_edge_probs_np.shape
+        eval_mask = np.ones((n_cells, n_cells, n_types), dtype=bool)
+        for k in range(n_types):
+            np.fill_diagonal(eval_mask[:, :, k], False)
+
+        base = Path(p.get("output_path") or self.output_path)
+        lr_pair_names = [name for name, _ in sorted(edge_type_map.items(), key=lambda x: x[1])]
+        result = MetricsComputer.save_roc_pr_metrics_csv(
+            pos_edge_probs_np,
+            ccc_ground,
+            save_dir=base,
+            lr_pair_names=lr_pair_names,
+            eval_mask=eval_mask,
+            f1_threshold=p["threshold"],
+        )
+        if result is None:
+            return
+
+        print("=== Summary ===")
+        print(result["summary"].to_string(index=False))
+        print("\n=== Per LR pair ===")
+        print(result["per_class"].to_string(index=False))
 
     def run_domain_domain_heatmaps(self, **overrides) -> None:
         """Domain×domain communication heatmaps (total + per LR). Requires domain_path. Saves under ``domain_domain_heatmaps/`` as ``.svg``."""
@@ -548,6 +612,22 @@ class TreeLevelAnalysis:
 
     def _log(self, message: str) -> None:
         print(f"[TreeLevelAnalysis] {message}")
+
+    @classmethod
+    def from_adata(
+        cls,
+        adata: AnnData,
+        output_path: Union[str, Path],
+        **kwargs,
+    ) -> "TreeLevelAnalysis":
+        """Build analyzer from a self-contained CellSTIC AnnData bundle."""
+        from pipeline.runner import tree_results_from_adata
+
+        return cls(
+            tree_level_results=tree_results_from_adata(adata, output_path=output_path),
+            output_path=output_path,
+            **kwargs,
+        )
 
     def _get_tree_results(self, tree_level_results: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """Return tree-level results list (from arg or init); validate non-empty."""

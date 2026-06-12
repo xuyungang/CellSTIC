@@ -16,20 +16,21 @@ Long, Y., Ang, K.S., Sethi, R. et al. Deciphering spatial domains from spatial m
 
 ## Raw data layout
 
-Mirror the directory tree below under **`data/human_lymph_node/`** in this CellSTIC repository (`raw/`, `preprocess/`, `config/`, `model/`, `output/`, etc.). Filenames must match what `utils.loader.load_human_lymph_node` expects (see constants in that module).
+Use **`data/human_lymph_node/`** as the dataset root. The tutorial [`notebook/human_lymph_node.ipynb`](../../notebook/human_lymph_node.ipynb) reads two aligned AnnData objects from **`raw/`**:
+
+- `raw/rna.h5ad`
+- `raw/adt.h5ad`
+
+Each file should share the same cell barcodes (`obs_names`), include `obsm['spatial']`, and RNA should include `obs['cell_type']`. Preprocessing (HVG, PCA/CLR, spatial distance matrix) is done in the notebook on every run; no `preprocess/` cache is used.
+
+Ligand–receptor pairs are passed manually in the notebook configuration (26 pairs; see the `ligand_receptor_map` dict in Step 2).
 
 ```
 data/human_lymph_node/
 ├── raw/
-│   ├── rna/          # e.g. GSM8195494_A1LN_matrix.mtx.gz, GSM8195494_A1LN_features.tsv.gz
-│   ├── adt/          # e.g. GSM8195498_A1_LN_Protein.h5ad, GSM8195498_A1LN_isotype_normalization_factors.csv.gz
-│   ├── spatial/      # e.g. GSM8195494_A1LN_tissue_positions.csv
-│   ├── l-r/LR.csv    # ligand–receptor table
-│   └── type/         # e.g. cell_type_annotations_mapped.csv
-├── preprocess/
-├── config/
-├── model/
-└── output/
+│   ├── rna.h5ad
+│   └── adt.h5ad
+├── model/            # trained CellSTIC checkpoints
+├── result/           # cellstic_result.h5ad
+└── analysis/         # figures (modality_umap/, cell_type_domain/, tree_level/, …)
 ```
-
-Set the loader’s `raw_path` to **`data/human_lymph_node/raw`**.

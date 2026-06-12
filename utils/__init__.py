@@ -1,6 +1,6 @@
-"""Utils: tools (LLM, BGE, CellChatDB, CellTypist), train (config), data, loader, metrics, analysis, viz."""
+"""Utils: tools (LLM, BGE, CellChatDB, CellTypist), data, loader, metrics, analysis, viz."""
 
-from . import analysis, data, loader, metrics, tools, train, viz
+from . import analysis, data, loader, metrics, tools, viz
 from .data import (
     SpatialPreprocessorUtils,
     process_fragments,
@@ -16,18 +16,16 @@ from .tools import (
     CellTypistAnnotator,
     annotate_with_celltypist,
 )
-from .train import (
-    ExperimentConfig,
-    load_config,
-    ModelConfig,
-    TraingConfig,
-    ClusteringUtils,
+from model.train import (
+    CellSTICConfig,
+    CellSTICModelConfig,
+    CellSTICTrainConfig,
     EdgeFilterUtils,
-    GraphIOUtils,
     LossUtils,
     ModelUtils,
-    pca,
+    build_config,
 )
+from .tools import ClusteringUtils, pca
 from .loader import (
     load_human_lymph_node,
     load_human_skin,
@@ -35,13 +33,11 @@ from .loader import (
     load_mouse_brain,
     load_mouse_embryo,
     load_nsf,
-    load_scmultisim,
 )
 from .metrics import (
     ClusteringMetrics,
     F1MetricsComputer,
     MetricsComputer,
-    MetricsCurveVisualizer,
     SpatialVisualizer,
     UMAPVisualizer,
     get_custom_palette,
@@ -56,15 +52,12 @@ from .analysis import (
     detect_communities_louvain,
     get_colour_scheme,
 )
-from .train import generate_config
-
 __all__ = [
     "analysis",
     "data",
     "loader",
     "metrics",
     "tools",
-    "train",
     "viz",
     "AliyunLLMClient",
     "BGEEmbeddingUtils",
@@ -72,13 +65,11 @@ __all__ = [
     "CellChatDBLoader",
     "CellTypistAnnotator",
     "annotate_with_celltypist",
-    "ExperimentConfig",
-    "load_config",
-    "ModelConfig",
-    "TraingConfig",
+    "CellSTICConfig",
+    "CellSTICModelConfig",
+    "CellSTICTrainConfig",
     "ClusteringUtils",
     "EdgeFilterUtils",
-    "GraphIOUtils",
     "LossUtils",
     "ModelUtils",
     "pca",
@@ -93,11 +84,9 @@ __all__ = [
     "load_mouse_brain",
     "load_mouse_embryo",
     "load_nsf",
-    "load_scmultisim",
     "ClusteringMetrics",
     "MetricsComputer",
     "F1MetricsComputer",
-    "MetricsCurveVisualizer",
     "SpatialVisualizer",
     "UMAPVisualizer",
     "get_custom_palette",
@@ -108,5 +97,5 @@ __all__ = [
     "StrengthDistanceVisualizer",
     "detect_communities_louvain",
     "get_colour_scheme",
-    "generate_config",
+    "build_config",
 ]

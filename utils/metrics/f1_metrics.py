@@ -1,5 +1,5 @@
 """
-F1-score metrics for CCC evaluation: Macro-F1, Macro-Accuracy, per-LR-pair F1/ACC/AUC/AUPRC.
+F1-score metrics for CCC evaluation: Macro-F1, Macro-Accuracy, per-LR-pair F1/ACC/AUROC/AUPRC.
 """
 
 from pathlib import Path
@@ -122,8 +122,8 @@ class F1MetricsComputer:
         zero_division: Union[str, float] = 0,
     ) -> List[Dict]:
         """
-        Compute per-LR-pair F1, accuracy (with given threshold), AUC, AUPRC.
-        Returns list of dicts: [{"lr_pair": "101:2", "f1": 0.7, "accuracy": 0.85, "auc": 0.9, "auprc": 0.8}, ...]
+        Compute per-LR-pair F1, accuracy (with given threshold), AUROC, AUPRC.
+        Returns list of dicts: [{"lr_pair": "101:2", "f1": 0.7, "accuracy": 0.85, "auroc": 0.9, "auprc": 0.8}, ...]
         """
         if isinstance(pos_edge_probs, torch.Tensor):
             pos_edge_probs = pos_edge_probs.detach().cpu().numpy()
@@ -170,20 +170,20 @@ class F1MetricsComputer:
                 total_k = tp + tn + fp + fn
                 acc_k = float((tp + tn) / total_k) if total_k > 0 else (0.0 if zero_division == 0 else float(zero_division))
 
-            # AUC & AUPRC (threshold-independent)
+            # AUROC & AUPRC (threshold-independent)
             valid_k = np.isfinite(pk) & np.isfinite(t)
             if valid_k.sum() > 0 and t[valid_k].sum() > 0 and t[valid_k].sum() < valid_k.sum():
-                auc_k = float(roc_auc_score(t[valid_k], pk[valid_k]))
+                auroc_k = float(roc_auc_score(t[valid_k], pk[valid_k]))
                 auprc_k = float(average_precision_score(t[valid_k], pk[valid_k]))
             else:
-                auc_k = np.nan
+                auroc_k = np.nan
                 auprc_k = np.nan
 
             per_class_rows.append({
                 "lr_pair": lr_name,
                 "f1": f1_k,
                 "accuracy": acc_k,
-                "auc": auc_k,
+                "auroc": auroc_k,
                 "auprc": auprc_k,
             })
 
@@ -201,12 +201,12 @@ class F1MetricsComputer:
         search_optimal_threshold: bool = True,
     ) -> Dict[str, float]:
         """
-        Compute Macro-F1 and Macro-Accuracy, save to save_dir/ccc/f1_summary.csv.
-        Optionally finds best threshold. Returns summary at default threshold.
+        Compute Macro-F1 and Macro-Accuracy, save to save_dir/metrics/f1_summary.csv.
+        Optionally finds best threshold. Returns summary dict and per-class rows.
         """
         save_dir = Path(save_dir)
-        ccc_dir = save_dir / "ccc"
-        ccc_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir = save_dir / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
 
         summary = F1MetricsComputer.compute_f1_summary(
             pos_edge_probs, label, threshold=threshold, lr_pair_names=lr_pair_names,
@@ -234,17 +234,18 @@ class F1MetricsComputer:
             summary["macro_accuracy_best"] = best_summary["macro_accuracy"]
             thr_for_per_class = best_thr
 
-        # Per-LR-pair: F1, ACC (with best/fixed threshold), AUC, AUPRC
+        # Per-LR-pair: F1, ACC (with best/fixed threshold), AUROC, AUPRC
         per_class_rows = F1MetricsComputer.compute_per_class_metrics(
             pos_edge_probs, label,
             threshold=thr_for_per_class,
             lr_pair_names=lr_pair_names,
             eval_mask=eval_mask,
         )
-        pd.DataFrame(per_class_rows).to_csv(ccc_dir / "f1_per_class.csv", index=False)
-        print(f"F1 per-class saved to {ccc_dir / 'f1_per_class.csv'}")
+        row["macro_auroc"] = float(np.nanmean([r["auroc"] for r in per_class_rows]))
+        row["macro_auprc"] = float(np.nanmean([r["auprc"] for r in per_class_rows]))
+        summary["macro_auroc"] = row["macro_auroc"]
+        summary["macro_auprc"] = row["macro_auprc"]
+        pd.DataFrame(per_class_rows).to_csv(metrics_dir / "f1_per_class.csv", index=False)
+        pd.DataFrame([row]).to_csv(metrics_dir / "f1_summary.csv", index=False)
 
-        pd.DataFrame([row]).to_csv(ccc_dir / "f1_summary.csv", index=False)
-        print(f"F1 summary saved to {ccc_dir / 'f1_summary.csv'}")
-
-        return summary
+        return {"summary": summary, "per_class_rows": per_class_rows}
