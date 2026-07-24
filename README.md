@@ -95,6 +95,10 @@ For Aliyun-based LLM tools (used only in optional helper utilities), edit `confi
 | `notebook/axolotl_develop.ipynb` | Axolotl telencephalon (development) |
 | `notebook/axolotl_regene.ipynb` | Axolotl telencephalon (regeneration) |
 
+## Hardware
+
+All analyses and tutorial notebooks were run on a workstation equipped with one NVIDIA GeForce RTX 4090 GPU, a 128-core CPU, and 128 GB of RAM. This configuration is provided for reproducibility and does not represent the minimum hardware requirement.
+
 ## Feedback
 
 Bug reports, questions, and feature suggestions: please [open an issue](https://github.com/xuyungang/CellSTIC/issues) on GitHub.
