@@ -166,10 +166,44 @@ class HierarchyTree:
                                 'type_idx': self._type_idx(leaf, idx),
                             })
         return result
-    
+
+    def format_ascii(self, *, method: Optional[str] = None) -> str:
+        """Pretty-print the ligand–receptor hierarchy as an ASCII tree."""
+        n_leaves = len(self.get_leaf_nodes())
+        n_lr = len(self._edge_type_to_node) or sum(len(n.edge_types) for n in self.get_leaf_nodes())
+        header = "Ligand–receptor hierarchy"
+        if method:
+            header = f"{header} (method={method})"
+        lines = [
+            header,
+            f"depth={self.get_max_depth()}  nodes={self.get_total_nodes()}  "
+            f"leaf_nodes={n_leaves}  lr_pairs={n_lr}",
+        ]
+
+        def _node_label(node: TreeNode) -> str:
+            if node.is_leaf() and node.edge_types:
+                if len(node.edge_types) == 1 and node.edge_types[0] == node.name:
+                    return node.name
+                return f"{node.name}  [{', '.join(node.edge_types)}]"
+            return node.name
+
+        def _walk(node: TreeNode, prefix: str, is_last: bool, is_root: bool) -> None:
+            if is_root:
+                lines.append(_node_label(node))
+            else:
+                branch = "└── " if is_last else "├── "
+                lines.append(f"{prefix}{branch}{_node_label(node)}")
+            if not node.children:
+                return
+            child_prefix = "" if is_root else prefix + ("    " if is_last else "│   ")
+            for idx, child in enumerate(node.children):
+                _walk(child, child_prefix, idx == len(node.children) - 1, False)
+
+        _walk(self.root, "", True, True)
+        return "\n".join(lines)
+
     def __str__(self) -> str:
         return f"HierarchyTree(root='{self.root.name}', nodes={self.get_total_nodes()}, depth={self.get_max_depth()})"
     
     def __repr__(self) -> str:
         return self.__str__()
-    

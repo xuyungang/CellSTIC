@@ -558,6 +558,9 @@ class TreeLevelAnalysis:
         "cell_type_key": "cell_type",
         "domain_key": "domain",
         "alluvial_min_width_fraction": 0.01,
+        "alluvial_outer_label_top_n": 12,
+        "alluvial_outer_label_min_fraction": 0.025,
+        "alluvial_show_leaf_percent": False,
     }
 
     def __init__(
@@ -654,10 +657,22 @@ class TreeLevelAnalysis:
             threshold=p.get("threshold", self._DEFAULTS["threshold"]),
             min_count_threshold=p.get("min_count_threshold", self._DEFAULTS["min_count_threshold"]),
             min_width_fraction=p.get("alluvial_min_width_fraction", 0.01),
-            figsize=p.get("figsize", (8.0, 5.0)),
+            figsize=p.get("figsize", (6.2, 5.2)),
             dpi=p.get("dpi", 600),
             base_output_dir=self.output_path,
             show_title=p.get("alluvial_show_title", True),
+            outer_label_top_n=p.get(
+                "alluvial_outer_label_top_n",
+                self._DEFAULTS["alluvial_outer_label_top_n"],
+            ),
+            outer_label_min_fraction=p.get(
+                "alluvial_outer_label_min_fraction",
+                self._DEFAULTS["alluvial_outer_label_min_fraction"],
+            ),
+            show_leaf_percent=p.get(
+                "alluvial_show_leaf_percent",
+                self._DEFAULTS["alluvial_show_leaf_percent"],
+            ),
         )
 
 

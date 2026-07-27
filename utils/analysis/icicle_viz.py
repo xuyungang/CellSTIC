@@ -22,7 +22,7 @@ from .cell_type_communication import CellTypeCommunicationComputer
 _NATURE_RC = {
     "font.family": "sans-serif",
     "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans", "Liberation Sans", "sans-serif"],
-    "font.size": 6.5,
+    "font.size": 7.0,
     "axes.linewidth": 0.5,
     "axes.edgecolor": "#2B2B2B",
     "xtick.major.width": 0.5,
@@ -40,6 +40,21 @@ _NATURE_RC = {
     "lines.antialiased": True,
     "text.antialiased": True,
 }
+
+_NATURE_QUALITATIVE_PALETTE = [
+    "#0072B2",
+    "#009E73",
+    "#D55E00",
+    "#CC79A7",
+    "#56B4E9",
+    "#E69F00",
+    "#6A3D9A",
+    "#8C564B",
+    "#5F6A6A",
+    "#B03A2E",
+    "#117A65",
+    "#2E4053",
+]
 
 
 @dataclass
@@ -89,6 +104,9 @@ class IcicleVisualizer:
         dpi: int,
         high_contrast: bool = False,
         stable_order_level_keys: Optional[Iterable[str]] = ("level_2", "level_3"),
+        outer_label_top_n: int = 12,
+        outer_label_min_fraction: float = 0.025,
+        show_leaf_percent: bool = False,
     ) -> None:
         """Draw one circular hierarchical plot for given leaf-level strengths."""
         plt.rcParams.update(_NATURE_RC)
@@ -133,6 +151,12 @@ class IcicleVisualizer:
 
         level_codes = _build_level_codes(nodes_by_level)
         _layout_radial_tree(root, start_angle=90.0, end_angle=450.0)
+        outer_label_node_ids = _select_outer_label_node_ids(
+            nodes_by_level=nodes_by_level,
+            total_strength=total_strength,
+            top_n=outer_label_top_n,
+            min_fraction=outer_label_min_fraction,
+        )
 
         branch_palette = _get_branch_palette(high_contrast=high_contrast)
 
@@ -181,10 +205,11 @@ class IcicleVisualizer:
         ax.set_facecolor("white")
         ax.set_aspect("equal")
 
-        # Compact layout: slightly larger center hole, tighter ring gaps, shorter outside label offset.
-        inner_hole = 0.34
-        outer_radius = 0.985
-        ring_gap = 0.010 if n_levels >= 4 else 0.012
+        # Compact, publication-oriented layout: generous center whitespace, thin
+        # separators, and enough outside room for selected leaf labels.
+        inner_hole = 0.32
+        outer_radius = 0.975
+        ring_gap = 0.012 if n_levels >= 4 else 0.014
         usable_radial = outer_radius - inner_hole - ring_gap * max(n_levels - 1, 0)
         ring_width = max(usable_radial / max(n_levels, 1), 0.075)
 
@@ -192,8 +217,8 @@ class IcicleVisualizer:
             (0.0, 0.0),
             radius=outer_radius + 0.0015,
             facecolor="none",
-            edgecolor="#ECECEC",
-            linewidth=0.42,
+            edgecolor="#E6E6E6",
+            linewidth=0.36,
             zorder=0,
         )
         ax.add_patch(outer_frame)
@@ -209,9 +234,9 @@ class IcicleVisualizer:
                 theta1=0.0,
                 theta2=360.0,
                 width=ring_width,
-                facecolor="#FDFDFD",
-                edgecolor="#F2F2F2",
-                linewidth=0.28,
+                facecolor="#FFFFFF",
+                edgecolor="#F0F0F0",
+                linewidth=0.24,
                 zorder=0,
             )
             ax.add_patch(guide)
@@ -249,7 +274,7 @@ class IcicleVisualizer:
                     width=ring_width,
                     facecolor=fill,
                     edgecolor=edge_rgba,
-                    linewidth=0.44,
+                    linewidth=0.36,
                     joinstyle="round",
                     antialiased=True,
                     zorder=2,
@@ -260,18 +285,22 @@ class IcicleVisualizer:
 
                 if 0 < lvl_idx < n_levels - 1 and node.node_id in level_codes[lvl_idx]:
                     display_text = level_codes[lvl_idx][node.node_id]
-                    min_span = 12.5
-                    min_arc = 0.13
+                    min_span = 14.0
+                    min_arc = 0.15
                     fontweight = "semibold"
                 else:
                     if lvl_idx == n_levels - 1:
+                        if node.node_id not in outer_label_node_ids:
+                            continue
                         frac = float(node.weight) / total_strength if total_strength > 0 else 0.0
-                        display_text = f"{node.name} ({frac * 100:.1f}%)"
-                        min_span = 8.5
-                        min_arc = 0.10
+                        display_text = _ellipsize(node.name, 30)
+                        if show_leaf_percent:
+                            display_text = f"{display_text}\n{frac * 100:.1f}%"
+                        min_span = 7.0
+                        min_arc = 0.08
                     else:
                         display_text = _ellipsize(node.name, 18)
-                        min_span = 13.5
+                        min_span = 14.0
                         min_arc = 0.16
                     fontweight = "normal"
 
@@ -293,7 +322,7 @@ class IcicleVisualizer:
                             text=display_text,
                             theta_mid=mid,
                             fill=fill,
-                            fontsize=max(6.2, min(fontsize, 7.5)),
+                            fontsize=max(6.2, min(fontsize, 7.2)),
                             anchor_xy=(x_anchor, y_anchor),
                             elbow_xy=(x_elbow, y_elbow),
                             side=side,
@@ -336,8 +365,8 @@ class IcicleVisualizer:
             (0.0, 0.0),
             radius=center_radius,
             facecolor="white",
-            edgecolor="#EAEAEA",
-            linewidth=0.55,
+            edgecolor="#E3E3E3",
+            linewidth=0.48,
             zorder=5,
         )
         ax.add_patch(center)
@@ -361,7 +390,7 @@ class IcicleVisualizer:
                 va="center",
                 fontsize=6.8,
                 fontweight="semibold",
-                color="#111111",
+                color="#1A1A1A",
                 linespacing=1.10,
                 path_effects=(
                     []
@@ -371,8 +400,8 @@ class IcicleVisualizer:
                 zorder=6,
             )
 
-        # Tighter canvas while still leaving room for short outside labels.
-        limit = 1.16
+        # Tighter canvas while still leaving room for the curated outside labels.
+        limit = 1.14
         ax.set_xlim(-limit, limit)
         ax.set_ylim(-1.09, 1.09)
         ax.set_xticks([])
@@ -503,6 +532,42 @@ def _build_level_codes(nodes_by_level: List[List[_RadialNode]]) -> List[Dict[Tup
 
 
 
+def _select_outer_label_node_ids(
+    *,
+    nodes_by_level: List[List[_RadialNode]],
+    total_strength: float,
+    top_n: int,
+    min_fraction: float,
+) -> Set[Tuple[str, ...]]:
+    """Keep the outer ring readable by labeling only dominant leaf nodes."""
+    if not nodes_by_level:
+        return set()
+
+    leaves = list(nodes_by_level[-1])
+    if not leaves:
+        return set()
+
+    top_n = max(int(top_n), 0)
+    min_fraction = max(float(min_fraction), 0.0)
+    denom = max(float(total_strength), 1e-12)
+
+    ranked = sorted(leaves, key=lambda n: (-n.weight, n.first_pos, str(n.name), n.node_id))
+    selected_nodes = [node for node in ranked if float(node.weight) / denom >= min_fraction]
+    if top_n > 0:
+        seen = {node.node_id for node in selected_nodes}
+        for node in ranked:
+            if len(selected_nodes) >= top_n:
+                break
+            if node.node_id in seen:
+                continue
+            selected_nodes.append(node)
+            seen.add(node.node_id)
+        selected_nodes = selected_nodes[:top_n]
+
+    return {node.node_id for node in selected_nodes}
+
+
+
 def _layout_radial_tree(
     root: _RadialNode,
     start_angle: float,
@@ -565,25 +630,16 @@ def _ellipsize(text: str, max_chars: int = 18) -> str:
 
 def _get_branch_palette(high_contrast: bool = True) -> List[str]:
     if high_contrast:
-        return [
-            "#2F5D8A",
-            "#2E8B7F",
-            "#C65D4B",
-            "#7A5C99",
-            "#8D9A52",
-            "#A06A45",
-            "#5E7E99",
-            "#B36A8C",
-        ]
+        return _NATURE_QUALITATIVE_PALETTE
     return [
-        "#4C78A8",
-        "#54A24B",
-        "#E17C05",
-        "#B279A2",
-        "#72B7B2",
-        "#9D755D",
-        "#BAB0AC",
-        "#D65F5F",
+        "#4E79A7",
+        "#59A14F",
+        "#E15759",
+        "#B07AA1",
+        "#76B7B2",
+        "#F28E2B",
+        "#79706E",
+        "#9C755F",
     ]
 
 

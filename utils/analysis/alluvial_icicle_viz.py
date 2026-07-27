@@ -201,6 +201,9 @@ def _render_icicle_pair_plot(
     dpi: int,
     high_contrast: bool,
     stable_order_level_keys: Optional[Iterable[str]],
+    outer_label_top_n: int,
+    outer_label_min_fraction: float,
+    show_leaf_percent: bool,
 ) -> None:
     """Render radial icicle-style hierarchy plot for one pair."""
     radial._plot_alluvial_core(  # type: ignore[attr-defined]
@@ -215,6 +218,9 @@ def _render_icicle_pair_plot(
         dpi=dpi,
         high_contrast=high_contrast,
         stable_order_level_keys=stable_order_level_keys,
+        outer_label_top_n=outer_label_top_n,
+        outer_label_min_fraction=outer_label_min_fraction,
+        show_leaf_percent=show_leaf_percent,
     )
 
 
@@ -233,6 +239,9 @@ def _plot_alluvial_pair_collection(
     high_contrast: bool,
     stable_order_level_keys: Optional[Iterable[str]],
     radial: RadialAlluvialVisualizer,
+    outer_label_top_n: int = 12,
+    outer_label_min_fraction: float = 0.025,
+    show_leaf_percent: bool = False,
 ) -> None:
     """Render icicle pair plots in batch."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -256,6 +265,9 @@ def _plot_alluvial_pair_collection(
             dpi=dpi,
             high_contrast=high_contrast,
             stable_order_level_keys=stable_order_level_keys,
+            outer_label_top_n=outer_label_top_n,
+            outer_label_min_fraction=outer_label_min_fraction,
+            show_leaf_percent=show_leaf_percent,
         )
 
 
@@ -309,6 +321,9 @@ def plot_alluvial_and_icicle_per_domain(
     show_title: bool = False,
     stable_order_level_keys: Optional[Iterable[str]] = ("level_2", "level_3"),
     high_contrast: bool = True,
+    outer_label_top_n: int = 12,
+    outer_label_min_fraction: float = 0.025,
+    show_leaf_percent: bool = False,
 ) -> None:
     """
     Render radial icicle-style hierarchy plots for domain–domain communication.
@@ -358,6 +373,9 @@ def plot_alluvial_and_icicle_per_domain(
         high_contrast=high_contrast,
         stable_order_level_keys=stable_order_level_keys,
         radial=radial,
+        outer_label_top_n=outer_label_top_n,
+        outer_label_min_fraction=outer_label_min_fraction,
+        show_leaf_percent=show_leaf_percent,
     )
 
 
@@ -375,6 +393,9 @@ def plot_alluvial_and_icicle_per_cell_type_pair(
     show_title: bool = True,
     stable_order_level_keys: Optional[Iterable[str]] = ("level_2", "level_3"),
     high_contrast: bool = True,
+    outer_label_top_n: int = 12,
+    outer_label_min_fraction: float = 0.025,
+    show_leaf_percent: bool = False,
 ) -> None:
     """
     Render radial icicle-style hierarchy plots for each (source, target) cell-type pair.
@@ -416,6 +437,9 @@ def plot_alluvial_and_icicle_per_cell_type_pair(
         high_contrast=high_contrast,
         stable_order_level_keys=stable_order_level_keys,
         radial=radial,
+        outer_label_top_n=outer_label_top_n,
+        outer_label_min_fraction=outer_label_min_fraction,
+        show_leaf_percent=show_leaf_percent,
     )
 
     # Additionally generate sender/receiver stacked bars aligned with tree levels

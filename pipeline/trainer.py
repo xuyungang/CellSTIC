@@ -59,9 +59,6 @@ class CellSTICTrainer:
         """Run feature / CCC training, save model weights only, return in-memory graph artifacts."""
         modality_g_dgls = self.graph_generator.build_feature_dgl_graph(modality_features, spatial_coords)
 
-        if is_train_feature and self.feat_train_cfg:
-            self._feature_train(modality_features, modality_g_dgls)
-
         cell_types = None
         if "cell_type" in primary_adata.obs and self.lr_pair_type_constraints is not None:
             try:
@@ -72,34 +69,38 @@ class CellSTICTrainer:
         if not is_train_ccc or not self.ccc_train_cfg:
             raise ValueError("CCC training is required to produce evaluation artifacts.")
 
-        artifacts = self._ccc_precision_train(
-            gene_expression,
-            genes,
-            spatial_coords,
-            spatial_distances,
-            modality1_features,
-            modality_features,
-            modality_g_dgls,
+        # Build ligand–receptor hierarchy before any training so the tree is printed first.
+        ccc_prep = self._prepare_ccc_graph_and_tree(
+            gene_expression=gene_expression,
+            genes=genes,
+            spatial_distances=spatial_distances,
+            modality_features=modality_features,
             cell_types=cell_types,
+        )
+
+        if is_train_feature and self.feat_train_cfg:
+            self._feature_train(modality_features, modality_g_dgls)
+
+        artifacts = self._ccc_precision_train(
+            modality1_features=modality1_features,
+            modality_g_dgls=modality_g_dgls,
+            spatial_coords=spatial_coords,
+            ccc_prep=ccc_prep,
         )
 
         ModelUtils.save_model(self.model, self.model_path)
         return artifacts
 
-    def _ccc_precision_train(
+    def _prepare_ccc_graph_and_tree(
         self,
+        *,
         gene_expression,
         genes,
-        spatial_coords: torch.Tensor,
         spatial_distances,
-        modality1_features: torch.Tensor,
         modality_features: List[torch.Tensor],
-        modality_g_dgls: List[dgl.DGLGraph],
         cell_types: Optional[np.ndarray] = None,
-    ) -> CellSTICTrainArtifacts:
-        """Build CCC graph, train per hierarchy level, return in-memory graph artifacts."""
-        cfg = self.ccc_train_cfg
-
+    ) -> Dict:
+        """Build CCC graph + LR hierarchy (prints tree) before training starts."""
         base_graph_adj, edge_type_map, ligand_strength_adj, receptor_strength_adj, knn_per_modality = (
             self.graph_generator.build_ccc_graph(
                 modality_features=modality_features,
@@ -117,12 +118,41 @@ class CellSTICTrainer:
         neg_sample_max_distance = EdgeFilterUtils.compute_spot_distance_threshold(
             spatial_distances_np, n_spots=4
         )
-
         hierarchy_dict = self.tree_builder.forward(
             edge_type_map, self.tree_builder.hierarchy_method, self.cell_chat_db
         )
-        hierarchy_levels = sorted(k for k in hierarchy_dict if k.startswith("level_"))
         self.precision_model.init_head_layers(hierarchy_dict)
+        return {
+            "base_graph_adj": base_graph_adj,
+            "edge_type_map": edge_type_map,
+            "ligand_strength_adj": ligand_strength_adj,
+            "receptor_strength_adj": receptor_strength_adj,
+            "knn_per_modality": knn_per_modality,
+            "hierarchy_dict": hierarchy_dict,
+            "spatial_distances_np": spatial_distances_np,
+            "neg_sample_max_distance": neg_sample_max_distance,
+        }
+
+    def _ccc_precision_train(
+        self,
+        *,
+        modality1_features: torch.Tensor,
+        modality_g_dgls: List[dgl.DGLGraph],
+        spatial_coords: torch.Tensor,
+        ccc_prep: Dict,
+    ) -> CellSTICTrainArtifacts:
+        """Train CCC precision per hierarchy level using a pre-built graph/tree."""
+        cfg = self.ccc_train_cfg
+        base_graph_adj = ccc_prep["base_graph_adj"]
+        edge_type_map = ccc_prep["edge_type_map"]
+        ligand_strength_adj = ccc_prep["ligand_strength_adj"]
+        receptor_strength_adj = ccc_prep["receptor_strength_adj"]
+        knn_per_modality = ccc_prep["knn_per_modality"]
+        hierarchy_dict = ccc_prep["hierarchy_dict"]
+        spatial_distances_np = ccc_prep["spatial_distances_np"]
+        neg_sample_max_distance = ccc_prep["neg_sample_max_distance"]
+
+        hierarchy_levels = sorted(k for k in hierarchy_dict if k.startswith("level_"))
 
         optimizer = Adam(
             list(self.precision_model.parameters()) + list(self.feat_integrator.parameters()),

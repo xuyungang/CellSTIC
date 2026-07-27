@@ -381,6 +381,7 @@ class Tree_Builder(nn.Module):
         else:
             raise ValueError(f"Invalid hierarchy method: {method}")
 
+        print(hierarchy_tree.format_ascii(method=method))
         hierarchy_dict = hierarchy_tree.to_dict()
         return hierarchy_dict
 
