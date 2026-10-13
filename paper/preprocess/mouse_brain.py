@@ -61,8 +61,8 @@ LIGAND_RECEPTOR_PAIRS = (
 
 
 PRIMARY_CHROMS = tuple([f"chr{i}" for i in range(1, 20)] + ["chrX"])
-DEFAULT_MACS2 = Path("/home/wangshuai/anaconda3/envs/spaGem/bin/macs2")
-DEFAULT_RSCRIPT = Path("/home/wangshuai/anaconda3/envs/R4.3.1-3/bin/Rscript")
+DEFAULT_MACS2 = Path(shutil.which("macs2") or "macs2")
+DEFAULT_RSCRIPT = Path(shutil.which("Rscript") or "Rscript")
 FRAGMENTS = {
     "atac": "GSM8494157_5M_20um_ATAC.fragments.tsv.gz",
     "h3k27ac": "GSM8494157_5M_20um_H3K27ac.fragments.tsv.gz",
@@ -516,8 +516,14 @@ def main() -> None:
                         help="New empty workspace; default is count/peak_count_v2/<timestamp>.")
     parser.add_argument("--chromatin-h5ad-dir", type=Path, default=None,
                         help="Install/validate already rebuilt chromatin h5ad files without recounting.")
-    parser.add_argument("--macs2-path", type=Path, default=DEFAULT_MACS2)
-    parser.add_argument("--rscript-path", type=Path, default=DEFAULT_RSCRIPT)
+    parser.add_argument(
+        "--macs2-path", type=Path, default=DEFAULT_MACS2,
+        help="MACS2 executable (default: macs2 on PATH).",
+    )
+    parser.add_argument(
+        "--rscript-path", type=Path, default=DEFAULT_RSCRIPT,
+        help="Rscript executable (default: Rscript on PATH).",
+    )
     parser.add_argument("--blacklist-bed", type=Path, default=None,
                         help="Optional mm10 zero-based BED blacklist; otherwise use the installed ArchR blacklist.")
     parser.add_argument("--peak-count-jobs", type=int, default=3, choices=[1, 2, 3])

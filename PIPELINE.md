@@ -129,8 +129,8 @@ source tree when deploying CellSTIC.
 
 | Resource | Operational role | When required |
 |---|---|---|
-| `resources/cellchatdb/` | CellChat metadata used by the biological hierarchy builder; human, mouse, and zebrafish files are included | Runs using `hierarchy_method="biological"` with matching species metadata |
-| `resources/celltypist/` | Cell-type annotation models used by mouse-embryo preprocessing | The corresponding mouse-embryo assembly workflow |
+| [`resources/cellchatdb/`](resources/cellchatdb/README.md) | CellChat metadata used by the biological hierarchy builder; human, mouse, and zebrafish files are included | Runs using `hierarchy_method="biological"` with matching species metadata |
+| [`resources/celltypist/`](resources/celltypist/README.md) | Cell-type annotation models used by mouse-embryo preprocessing | The corresponding mouse-embryo assembly workflow |
 | `resources/bge-base-en-v1.5/` | Deterministic semantic embeddings for the LLM hierarchy builder | Runs using the local semantic hierarchy path |
 | `resources/aliyun/aliyun_config.yaml` | Service configuration for Aliyun-backed hierarchy generation | Runs explicitly selecting that service; users must provide their own credential |
 

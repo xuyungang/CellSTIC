@@ -76,7 +76,8 @@ class ClusteringMetrics:
         Args:
             features: Feature matrix (n_samples, n_features)
             true_labels: True labels for external metrics evaluation (optional)
-            cluster_labels: Pre-computed cluster labels (n_samples,) - if provided, skips clustering
+            cluster_labels: Required pre-computed cluster labels (n_samples,).
+                This function does not perform clustering.
             
         Returns:
             Dictionary containing metric names and their values
@@ -86,7 +87,7 @@ class ClusteringMetrics:
             features = features.detach().cpu().numpy()
         features = np.asarray(features)
         
-        # Use pre-computed cluster labels if provided, otherwise perform clustering
+        # Convert the required pre-computed cluster labels to NumPy.
         if isinstance(cluster_labels, torch.Tensor):
             cluster_labels = cluster_labels.detach().cpu().numpy()
         cluster_labels = np.asarray(cluster_labels)
@@ -116,7 +117,7 @@ class ClusteringMetrics:
         if true_labels is not None:
             true_labels = np.asarray(true_labels)
             
-            # AMI (Adjusted Mutual Information): Range [0, 1], higher is better
+            # AMI: 1 means identical partitions, 0 is chance-level; values may be negative.
             try:
                 metrics['AMI'] = float(adjusted_mutual_info_score(true_labels, cluster_labels))
             except Exception:
@@ -179,7 +180,7 @@ class ClusteringMetrics:
         if any(key in metrics for key in ['AMI', 'NMI', 'ARI', 'Homogeneity', 'Mutual_info', 'V-measure']):
             print("\n🏷️  External Metrics (Labeled Data):")
             if 'AMI' in metrics and not np.isnan(metrics['AMI']):
-                print(f"  • AMI (Adjusted Mutual Info):    {metrics['AMI']:.{precision}f} [range: 0 to 1, higher better]")
+                print(f"  • AMI (Adjusted Mutual Info):    {metrics['AMI']:.{precision}f} [1: agreement; 0: chance; can be negative]")
             if 'NMI' in metrics and not np.isnan(metrics['NMI']):
                 print(f"  • NMI (Normalized Mutual Info): {metrics['NMI']:.{precision}f} [range: 0 to 1, higher better]")
             if 'ARI' in metrics and not np.isnan(metrics['ARI']):

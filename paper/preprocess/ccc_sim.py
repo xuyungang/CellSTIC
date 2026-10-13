@@ -17,9 +17,9 @@ Default output layout::
       ...
       manifest.csv
 
-scMultiSim is executed with the R installation from the dedicated conda
-environment.  The Python environment running this file needs anndata, numpy,
-pandas and scipy.
+scMultiSim is executed with Rscript from PATH, or the executable supplied via
+``--rscript``. Its R environment needs scMultiSim and Matrix. The Python
+environment running this file needs anndata, numpy, pandas and scipy.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -44,7 +45,7 @@ from scipy.io import mmread
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "paper" / "data" / "ccc_sim" / "h5ad"
-DEFAULT_RSCRIPT = Path("/home/wangshuai/anaconda3/envs/scmultisim/bin/Rscript")
+DEFAULT_RSCRIPT = Path(shutil.which("Rscript") or "Rscript")
 DEFAULT_SCENARIOS = ("domains", "gradients", "heterogeneous")
 DEFAULT_SEEDS = (11, 23, 37, 51, 73)
 LR_DESIGN = "sparse_within_pair_on_off_v2_distinct_lr_genes"
@@ -901,7 +902,10 @@ def _write_design(output_root: Path, args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--rscript", type=Path, default=DEFAULT_RSCRIPT)
+    parser.add_argument(
+        "--rscript", type=Path, default=DEFAULT_RSCRIPT,
+        help="Rscript executable (default: Rscript on PATH).",
+    )
     parser.add_argument(
         "--scenarios",
         nargs="+",

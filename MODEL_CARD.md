@@ -171,7 +171,11 @@ The complete source code, documentation, tutorial notebooks, and reproducible en
 
 https://github.com/xuyungang/CellSTIC
 
-CellSTIC is distributed under the GNU General Public License v3.0.
+CellSTIC source code is distributed under the GNU General Public License v3.0.
+Third-party database snapshots and pretrained models have separate provenance
+and license scope, documented in the [CellChatDB resource
+notice](resources/cellchatdb/README.md) and [CellTypist model
+notice](resources/celltypist/README.md).
 
 ## 11. Citation
 

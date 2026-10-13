@@ -89,4 +89,10 @@ visualization utilities. Figures and source tables use the shared `domain/`,
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+CellSTIC source code is licensed under the GNU General Public License v3.0.
+See [LICENSE](LICENSE).
+
+Third-party resource sources, local versions, checksums, and license scope are
+documented in [CellChatDB resources](resources/cellchatdb/README.md) and
+[CellTypist models](resources/celltypist/README.md). The project license does
+not establish redistribution permission for third-party model weights.
