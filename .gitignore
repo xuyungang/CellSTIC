@@ -1,14 +1,15 @@
-# Data - only track README.md and *.yaml in each dataset subdir (all levels)
-data/**
-!data/**/
-!data/**/README.md
-!data/**/*.yaml
-!data/**/config/
-!data/**/config/**/*.yaml
-cache/
+# Data - only track documentation; run data and artifacts remain local.
+/log/
+/paper/analysis/complexity/outupt/
+paper/data/**
+!paper/data/**/
+!paper/data/**/README.md
 
-# Component / model weights (BGE etc.)
-component/bge-base-en-v1.5/
+# Pretrained model weights (downloaded locally)
+resources/bge-base-en-v1.5/
+
+# Example
+example/cellstic
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -45,6 +46,7 @@ MANIFEST
 *.spec
 
 # Installer logs
+
 pip-log.txt
 pip-delete-this-directory.txt
 
@@ -159,6 +161,9 @@ venv.bak/
 # Spyder project settings
 .spyderproject
 .spyproject
+
+# VS Code workspace settings
+.vscode/
 
 # Rope project settings
 .ropeproject

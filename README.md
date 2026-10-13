@@ -1,19 +1,34 @@
 # CellSTIC
 
-Decoding Hierarchical Cell-Cell Communication in Spatial Multi-Omics with CellSTIC.
-**Preprint:** [https://doi.org/10.64898/2026.05.27.728114](https://doi.org/10.64898/2026.05.27.728114)
+Decoding hierarchical cell-cell communication in spatial multi-omics with
+CellSTIC.
 
 <p align="center">
-  <img src="assets/overview.png" alt="CellSTIC overview: linking in-situ tissue architecture to intercellular signaling programs" width="900"/>
+  <img src="assets/overview.png" alt="CellSTIC overview" width="900"/>
 </p>
 
 ## Method
 
-CellSTIC integrates spatial multi-omics evidence, functional region segmentation, and a ligand–receptor semantics tree to infer hierarchical cell–cell communication (CCC).
+CellSTIC integrates spatial multi-omics, spatial domain segmentation, and
+ligand-receptor relationships to infer hierarchical cell-cell communication.
 
 <p align="center">
-  <img src="assets/method_workflow.png" alt="CellSTIC workflow: data input, evidence integration, LR semantics tree building, and CCC application" width="900"/>
+  <img src="assets/method_workflow.png" alt="CellSTIC workflow" width="900"/>
 </p>
+
+## Documentation
+
+Each top-level document has one distinct role:
+
+| Document | Scope |
+|---|---|
+| [PIPELINE.md](PIPELINE.md) | Canonical operational guide: input fields, dimensions, configuration, graph construction, training, inference, output files, and API hand-offs. |
+| [MODEL_CARD.md](MODEL_CARD.md) | Scientific and responsible-use description: intended use, model scope, evaluation context, limitations, ethics, and reproducibility considerations. |
+| README.md | Project landing page: overview, installation, documentation navigation, repository structure, and license. |
+
+Dataset-specific acquisition and assembly details remain in
+`paper/data/<dataset>/README.md`. Those files do not redefine the shared model
+pipeline.
 
 ## Installation
 
@@ -22,87 +37,62 @@ conda env create -f environment.yml
 conda activate cellstic
 ```
 
-Run the tutorials from `notebook/`; each notebook adds the project root to `sys.path` automatically. **Start Jupyter with the repository root as the working directory.**
+Run commands from the repository root.
 
-## Project Structure
+## Start an analysis
+
+Follow [PIPELINE.md](PIPELINE.md) for the public `pipeline.run_cellstic` API,
+input preparation, configuration, training, inference, generated files, and
+analysis hand-off.
+
+| Workspace | Intended use |
+|---|---|
+| `example/` | User-facing examples for applying CellSTIC to external datasets; place or link example inputs under `example/data/`. |
+| `paper/` | Manuscript dataset documentation, data assembly scripts, and analysis-ready tutorials. |
+
+These workspaces are deliberately separate: `example/` demonstrates general
+use on user-provided data, whereas `paper/` documents the analyses reported in
+the manuscript.
+
+The executable [external-data tutorial](example/example.ipynb) uses the full
+SPOTS mouse spleen replicate 1 dataset (2,653 spots; spatial RNA--ADT) from GEO
+GSE198353. It covers checksum validation, quality control, AnnData assembly,
+modality-aware preprocessing, training, result export, and downstream domain,
+CCC, and hierarchy analysis. No spots or molecular features are sampled; source
+provenance is documented in [example/data/README.md](example/data/README.md).
+Training is commented out by default. Running the analysis cells reads the
+saved model under `example/cellstic/`; uncomment training only to fit a new
+model. Generated results are local artifacts and are excluded from Git.
+
+The [manuscript dataset tutorials](paper/notebook/) also start with optional,
+commented training and include executed analysis figures and tables. Their
+analyses reuse the existing dataset `cellstic/` output locations. Temporal and
+simulation helpers are in `utils/analysis/`; spatial plots reuse the existing
+visualization utilities. Figures and source tables use the shared `domain/`,
+`ccc/`, and `alluvial/` folders; temporal results are grouped by analysis under
+`cellstic/time/`.
+
+## Project structure
 
 | Directory | Description |
-|-----------|-------------|
-| `model/` | `CellSTIC`, HODGNN, graph construction, hierarchy tree |
-| `pipeline/` | Training, evaluation, analysis, and `run_cellstic` entry point |
-| `utils/` | Data preprocessing, analysis tools, metrics, viz |
-| `config/` | Experiment YAML configs |
-| `data/` | Raw and preprocessed data |
-| `component/` | Simulators and component-level modules (e.g. synthetic spatial patterns) |
-| `notebook/` | Step-by-step Jupyter tutorials (`.ipynb`) |
-
-## Dependencies
-
-- Single-cell / spatial: `anndata`, `scanpy`, `celltypist`
-- Deep learning: `torch`, `dgl`
-- Graphs: `igraph`, `networkx`, `louvain`
-- General: `numpy`, `pandas`, `scipy`, `matplotlib`, `scikit-learn`, `PyYAML`, `h5py`, `tqdm`
-- Embedding model files: download and place `bge-base-en-v1.5` manually at `component/bge-base-en-v1.5`
-- Aliyun LLM config: either manually set `api_key`, `region`, and `base_url` in `config/aliyun_config.yaml` (section `aliyun`), or use the helper API below (do not commit real keys)
-
-See `requirements.txt` and `environment.yml` for details.
-
-## Quick Start
-
-**Workflow**: load / preprocess `AnnData` in the matching notebook → `run_cellstic` → `SingleLevelAnalysis.from_adata`. See `notebook/*.ipynb` and `data/<dataset>/README.md`.
-
-Each modality needs `obsm["feat"]`, `obsm["spatial"]`, and (recommended) `obsp["spatial_distances"]`.
-
-```python
-from pathlib import Path
-import torch
-from pipeline import run_cellstic
-from utils.tools.seed_utils import set_global_seed
-
-set_global_seed()
-
-# After loading/preprocessing in notebook/scmultisim.ipynb (or another tutorial):
-result = run_cellstic(
-    modality_datas=[rna, atac],
-    ligand_receptor_map=lr_map,
-    model_path=Path("data/scmultisim/re1/model"),
-    output_path=Path("data/scmultisim/re1/result"),
-    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-)
-
-from pipeline.analyzer import SingleLevelAnalysis
-
-analysis = SingleLevelAnalysis.from_adata(result.adata, output_path=Path("data/scmultisim/re1/analysis"))
-analysis.run_cell_type_heatmaps()
-```
-
-**Analysis** (`pipeline.analyzer`): `SingleLevelAnalysis`, `TreeLevelAnalysis`, `TimeSequenceAnalysis`, `DomainAnalysis`.
-
-**Low-level API** (optional): `build_config` → `CellSTICTrainer` → `CellSTICEvaluator`. Prefer `run_cellstic`.
-
-### Aliyun LLM configuration (optional)
-
-For Aliyun-based LLM tools (used only in optional helper utilities), edit `config/aliyun_config.yaml` or call `utils.tools.aliyun_utils.set_aliyun_config`. Not required for core experiments. Never commit real API keys.
-
-## Tutorial notebooks
-
-| Notebook | Dataset |
-|----------|---------|
-| `notebook/scmultisim.ipynb` | scMultiSim replicates re1–re8 |
-| `notebook/mouse_embryo.ipynb` | Mouse embryo Stereo-seq |
-| `notebook/mouse_brain.ipynb` | Mouse brain 5M |
-| `notebook/human_lymph_node.ipynb` | Human lymph node |
-| `notebook/axolotl_develop.ipynb` | Axolotl telencephalon (development) |
-| `notebook/axolotl_regene.ipynb` | Axolotl telencephalon (regeneration) |
-
-## Hardware
-
-All analyses and tutorial notebooks were run on a workstation equipped with one NVIDIA GeForce RTX 4090 GPU, a 128-core CPU, and 128 GB of RAM. This configuration is provided for reproducibility and does not represent the minimum hardware requirement.
-
-## Feedback
-
-Bug reports, questions, and feature suggestions: please [open an issue](https://github.com/xuyungang/CellSTIC/issues) on GitHub.
+|---|---|
+| `model/` | Model, graph modules, hierarchy tree, and training code |
+| `pipeline/` | End-to-end training, export, and analysis APIs |
+| `example/` | End-to-end external-data tutorial, complete public SPOTS input data, and locally generated CellSTIC output |
+| `paper/` | Manuscript dataset documentation, preprocessing, and tutorials |
+| `paper/data/` | Manuscript dataset documentation and local data directories |
+| `paper/preprocess/` | Raw-to-AnnData assembly for manuscript datasets |
+| `paper/notebook/` | Reviewer-facing, analysis-ready manuscript dataset tutorials |
+| `utils/` | Data, visualization, metric, and model-integration utilities (`utils/visualization/` contains plotting helpers) |
+| `resources/` | CellChat databases and optional local annotation/semantic resources |
+| `PIPELINE.md` | Canonical pipeline, input, output, and hand-off specification |
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+CellSTIC source code is licensed under the GNU General Public License v3.0.
+See [LICENSE](LICENSE).
+
+Third-party resource sources, local versions, checksums, and license scope are
+documented in [CellChatDB resources](resources/cellchatdb/README.md) and
+[CellTypist models](resources/celltypist/README.md). The project license does
+not establish redistribution permission for third-party model weights.

@@ -1,0 +1,24 @@
+{
+  "dataset": "SPOTS mouse spleen replicate 1",
+  "accession": "GSE198353",
+  "organism": "Mus musculus",
+  "modalities": [
+    "Gene Expression",
+    "Antibody Capture"
+  ],
+  "source_urls": {
+    "GSE198353_spleen_rep_1_filtered_feature_bc_matrix.h5": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE198nnn/GSE198353/suppl/GSE198353_spleen_rep_1_filtered_feature_bc_matrix.h5",
+    "GSE198353_spleen_replicate_1_spatial.tar.gz": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE198nnn/GSE198353/suppl/GSE198353_spleen_replicate_1_spatial.tar.gz"
+  },
+  "files_sha256": {
+    "GSE198353_spleen_rep_1_filtered_feature_bc_matrix.h5": "7062d81352ae9dccaea04a1d738eaf329342d90fc1eb64948973147db7feeb98",
+    "GSE198353_spleen_replicate_1_spatial.tar.gz": "8a336fef0d73df6e6bbcc4382620832bdef7df412423854e4e6b50efaf281544"
+  },
+  "matrix_shape": {
+    "spots": 2653,
+    "rna_features": 32285,
+    "adt_features": 21
+  },
+  "subset": null,
+  "retrieved": "2026-09-10"
+}

@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
 # Add project root to path
@@ -28,11 +27,11 @@ class CellChatDBLoader:
         
         Args:
             data_dir: Path to the CellChatDB directory containing .rda files.
-                     If None, uses default path relative to project root: component/cellchatdb
+                     If None, uses the bundled ``resources/cellchatdb`` directory.
         """
         if data_dir is None:
             # Use relative path from project root
-            self.data_dir = project_root / 'component' / 'cellchatdb'
+            self.data_dir = project_root / "resources" / "cellchatdb"
         else:
             # If provided path is absolute, use it; otherwise, treat as relative to project root
             data_dir_path = Path(data_dir)
@@ -75,20 +74,6 @@ class CellChatDBLoader:
         result = pd.read_csv(file_path)
         return result
     
-    
-    def get_available_species(self) -> List[str]:
-        """
-        Get list of species with available CellChatDB data.
-        
-        Returns:
-            List of species names with available data files
-        """
-        available = []
-        for species, filename in self.species_files.items():
-            file_path = self.data_dir / filename
-            if file_path.exists():
-                available.append(species)
-        return available
     
     def get_ligand_receptor_map(self, species: str) -> Dict[str, Dict[str, Any]]:
         """
@@ -230,7 +215,13 @@ class CellChatDBLoader:
 
     @staticmethod
     def _find_row(ligand: str, receptor: str, cell_chat_db: Any) -> Optional[Dict[str, Any]]:
-        """Return first matching row as dict, or None. receptor: use '_' for DB."""
+        """Return an exact ligand-receptor match, or ``None``.
+
+        Receptor ``:``/``_`` spelling variants are treated as equivalent for
+        complexes.  Matching only one endpoint is deliberately forbidden:
+        metadata from a different interaction must never be attached to the
+        requested LR channel.
+        """
         if cell_chat_db is None:
             return None
         ligand_lower = ligand.lower()
@@ -248,22 +239,17 @@ class CellChatDBLoader:
             return None
 
         if isinstance(cell_chat_db, dict):
-            for key in cell_chat_db:
-                key_lower = key.lower()
-                if ':' in key_lower:
-                    parts = key_lower.split(':', 1)
-                    if len(parts) == 2 and parts[0] == ligand_lower and parts[1] in variants:
-                        return CellChatDBLoader._row_to_dict(cell_chat_db[key])
-                elif key_lower == ligand_lower or key_lower in variants:
-                    return CellChatDBLoader._row_to_dict(cell_chat_db[key])
-            for key in cell_chat_db:
-                key_lower = key.lower()
-                if ':' in key_lower:
-                    parts = key_lower.split(':', 1)
-                    if len(parts) == 2 and (parts[0] == ligand_lower or parts[1] in variants):
-                        return CellChatDBLoader._row_to_dict(cell_chat_db[key])
-                elif key_lower == ligand_lower or key_lower in variants:
-                    return CellChatDBLoader._row_to_dict(cell_chat_db[key])
+            for key, value in cell_chat_db.items():
+                if isinstance(key, tuple) and len(key) >= 2:
+                    key_ligand = str(key[0]).strip().lower()
+                    key_receptor = str(key[1]).strip().lower()
+                else:
+                    key_text = str(key).strip().lower()
+                    if ':' not in key_text:
+                        continue
+                    key_ligand, key_receptor = key_text.split(':', 1)
+                if key_ligand == ligand_lower and key_receptor in variants:
+                    return CellChatDBLoader._row_to_dict(value)
         return None
 
     @staticmethod
@@ -282,7 +268,10 @@ class CellChatDBLoader:
         }
         row = CellChatDBLoader._find_row(ligand, receptor, cell_chat_db)
         if not row:
-            return metadata
+            raise ValueError(
+                "CellChatDB has no exact ligand-receptor match for "
+                f"{ligand}:{receptor}"
+            )
         row = CellChatDBLoader._row_to_dict(row)
 
         annotation = CellChatDBLoader._get_field(row, 'annotation', 'pathway_name', 'pathway', default='Unknown')
@@ -327,12 +316,10 @@ class CellChatDBLoader:
             receptor_for_db = receptor.replace(':', '_')
             metadata = CellChatDBLoader.get_metadata_from_db(ligand, receptor_for_db, cell_chat_db)
             row = CellChatDBLoader._find_row(ligand, receptor_for_db, cell_chat_db)
-            if row:
-                row = row.copy() if isinstance(row, dict) else dict(row)
-                row.update(metadata)
-                result[key] = row
-            else:
-                result[key] = metadata
+            # get_metadata_from_db already guarantees that this exact pair exists.
+            row = row.copy() if isinstance(row, dict) else dict(row)
+            row.update(metadata)
+            result[key] = row
         return result
 
 

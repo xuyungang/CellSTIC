@@ -1,16 +1,23 @@
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import ListedColormap
 from matplotlib.patches import Rectangle
 import numpy as np
 from scipy.spatial.distance import cdist
-import scanpy as sc
 import anndata as ad
 from typing import Optional
 
-from utils.viz.matplotlib_svg import configure_matplotlib_svg_for_illustrator, path_wants_svg
-
 from .palette_utils import get_custom_palette
+
+
+def path_wants_svg(path: str) -> bool:
+    return str(path).lower().endswith(".svg")
+
+
+def configure_matplotlib_svg_for_illustrator() -> None:
+    """Keep SVG text as editable text for vector editors."""
+    import matplotlib as mpl
+
+    mpl.rcParams["svg.fonttype"] = "none"
 
 
 class SpatialVisualizer:

@@ -1,126 +1,176 @@
-"""Map edge types to virtual types (level groups) for hierarchical graphs."""
+"""Map sparse ligand-receptor channels to hierarchy-level virtual types."""
+
+from __future__ import annotations
+
+from typing import Dict, Literal, Optional, Sequence, Tuple
 
 import numpy as np
-from typing import Dict, Literal, Tuple
+from scipy import sparse
+
+from .sparse_graph import SparseTypedGraph, as_sparse_typed_graph
 
 
 class EdgeTypeMapper:
-    """Aggregate edge types per level group; output (n_cells, n_cells, n_groups)."""
-
     @staticmethod
     def _get_group_type_indices(level_data: Dict, edge_type_map: Dict):
-        """Return list of (group_index, type_indices) for each group in level_data."""
-        group_names = sorted(level_data.keys())
+        if not level_data:
+            raise ValueError("level_data must contain at least one hierarchy group")
+        if not edge_type_map:
+            raise ValueError("edge_type_map must contain at least one leaf channel")
         result = []
-        for g_idx, group_name in enumerate(group_names):
+        for group_index, group_name in enumerate(sorted(level_data)):
             group_data = level_data[group_name]
             items = group_data if isinstance(group_data, list) else [group_data]
-            type_indices = sorted(set(
-                edge_type_map[item["edge_type_name"]]
+            leaf_names = {
+                item.get("edge_type_name")
                 for item in items
-                if isinstance(item, dict) and "edge_type_name" in item and item["edge_type_name"] in edge_type_map
-            ))
-            result.append((g_idx, type_indices))
+                if isinstance(item, dict) and item.get("edge_type_name") is not None
+            }
+            unknown = sorted(name for name in leaf_names if name not in edge_type_map)
+            if unknown:
+                raise ValueError(
+                    f"Hierarchy group {group_name!r} references unknown leaf "
+                    f"channels: {unknown}"
+                )
+            indices = sorted({edge_type_map[name] for name in leaf_names})
+            if not indices:
+                raise ValueError(
+                    f"Hierarchy group {group_name!r} contains no leaf channels"
+                )
+            result.append((group_index, indices))
         return result
 
     @staticmethod
     def reduce_to_virtual_types(
-        adj: np.ndarray,
+        adj,
         level_data: Dict,
-        edge_type_map: Dict = None,
+        edge_type_map: Dict,
         reduction: Literal["sum", "max", "avg"] = "sum",
-    ) -> np.ndarray:
-        """Return (n_cells, n_cells, n_groups) by reducing adj over type indices per group. No normalization."""
-        if adj.ndim != 3:
-            raise ValueError("adj must be 3D (n_cells, n_cells, n_types)")
-        n_cells = adj.shape[0]
-        group_names = sorted(level_data.keys())
-        n_groups = len(group_names)
-        out = np.zeros((n_cells, n_cells, n_groups), dtype=adj.dtype)
-
-        if not edge_type_map:
-            return out
-
-        for g_idx, type_indices in EdgeTypeMapper._get_group_type_indices(level_data, edge_type_map):
-            if not type_indices:
-                continue
-            if reduction == "sum":
-                out[:, :, g_idx] = adj[:, :, type_indices].sum(axis=2)
-            elif reduction == "avg":
-                out[:, :, g_idx] = adj[:, :, type_indices].sum(axis=2) / len(type_indices)
-            else:
-                out[:, :, g_idx] = adj[:, :, type_indices].max(axis=2)
-        return out
+    ) -> SparseTypedGraph:
+        graph = as_sparse_typed_graph(adj)
+        if reduction not in {"sum", "max", "avg"}:
+            raise ValueError(f"Unsupported hierarchy reduction: {reduction!r}")
+        indices = sorted(edge_type_map.values())
+        if indices != list(range(len(graph))):
+            raise ValueError(
+                "edge_type_map must map contiguously onto graph channels, got "
+                f"{indices} for {len(graph)} channels"
+            )
+        channels = []
+        for _, indices in EdgeTypeMapper._get_group_type_indices(
+            level_data, edge_type_map
+        ):
+            result = sparse.csr_matrix((graph.n_nodes, graph.n_nodes), dtype=np.float32)
+            for index in indices:
+                result = (
+                    result.maximum(graph[index])
+                    if reduction == "max"
+                    else result + graph[index]
+                )
+            if reduction == "avg" and indices:
+                result = result / len(indices)
+            result.eliminate_zeros()
+            channels.append(result.tocsr())
+        return SparseTypedGraph.from_channels(channels, graph.n_nodes)
 
     @staticmethod
-    def map_edge_types_to_virtual_types(
-        base_graph: np.ndarray,
+    def map_path_targets(
+        base_graph_adj,
         level_data: Dict,
-        edge_type_map: Dict = None,
-    ) -> np.ndarray:
-        """Return new base graph (n_cells, n_cells, n_groups). Per group: max over type indices (0/1); then bottom 50% to 0, row-normalize, diagonal 1."""
-        n_cells = base_graph.shape[0]
-        group_names = sorted(level_data.keys())
-        n_groups = len(group_names)
-        group_graph = np.zeros((n_cells, n_cells, n_groups), dtype=base_graph.dtype)
+        edge_type_map: Dict,
+        *,
+        normalization_leaf_count: Optional[int] = None,
+    ) -> SparseTypedGraph:
+        """Return hierarchy-consistent path targets for one training level.
 
-        if not edge_type_map:
-            return group_graph
-
-        for g_idx, type_indices in EdgeTypeMapper._get_group_type_indices(level_data, edge_type_map):
-            if type_indices:
-                group_graph[:, :, g_idx] = base_graph[:, :, type_indices].max(axis=2)
-
-        for g_idx in range(n_groups):
-            tg = group_graph[:, :, g_idx]
-            if tg.sum() == 0:
-                continue
-            flat = tg.flatten()
-            bottom_count = len(flat) // 2
-            if bottom_count > 0:
-                bottom_flat = np.argsort(flat)[:bottom_count]
-                group_graph[bottom_flat // n_cells, bottom_flat % n_cells, g_idx] = 0
-            row_sums = group_graph[:, :, g_idx].sum(axis=1, keepdims=True)
-            row_sums[row_sums == 0] = 1
-            group_graph[:, :, g_idx] = group_graph[:, :, g_idx] / row_sums
-            np.fill_diagonal(group_graph[:, :, g_idx], 1)
-
-        return group_graph
+        Leaf targets remain binary.  Ancestor targets are the sum of active
+        descendant leaf indicators divided by the total number of real leaves,
+        matching exported upward aggregation.
+        """
+        targets = EdgeTypeMapper.reduce_to_virtual_types(
+            base_graph_adj,
+            level_data,
+            edge_type_map,
+            reduction="sum",
+        )
+        if normalization_leaf_count is None:
+            return targets
+        if normalization_leaf_count < 1:
+            raise ValueError("normalization_leaf_count must be >= 1")
+        return SparseTypedGraph.from_channels(
+            (channel / float(normalization_leaf_count) for channel in targets),
+            targets.n_nodes,
+        )
 
     @staticmethod
     def map_level_graph_and_strengths(
-        base_graph_adj: np.ndarray,
-        ligand_strength_adj: np.ndarray,
-        receptor_strength_adj: np.ndarray,
-        knn_per_modality: np.ndarray,
+        base_graph_adj,
+        ligand_strength_adj,
+        receptor_strength_adj,
+        knn_per_modality: Sequence[sparse.spmatrix],
         level_data: Dict,
-        edge_type_map: Dict = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Map base graph and strength/KNN arrays to virtual types for one level.
-        Returns (mapped_base_graph, mapped_ligand_strength, mapped_receptor_strength, knn_strength_adj).
-        - base_graph_adj: max over type indices per group, then bottom-50% zero + row-normalize.
-        - ligand/receptor_strength_adj: sum over type indices per group.
-        - knn_per_modality (n_cells, n_cells, n_modalities): for each modality call reduce_to_virtual_types (broadcast to n_types then sum per group); return (n_cells, n_cells, n_groups, n_modalities) for edge-feature concatenation."""
-        mapped_base_graph = EdgeTypeMapper.map_edge_types_to_virtual_types(
-            base_graph_adj, level_data, edge_type_map
-        )
-        mapped_ligand_strength = EdgeTypeMapper.reduce_to_virtual_types(
-            ligand_strength_adj, level_data, edge_type_map, reduction="avg"
-        )
-        mapped_receptor_strength = EdgeTypeMapper.reduce_to_virtual_types(
-            receptor_strength_adj, level_data, edge_type_map, reduction="avg"
-        )
-        knn = np.asarray(knn_per_modality)
-        n_types = base_graph_adj.shape[2]
-        n_modalities = knn.shape[2]
-        knn_mapped_list = []
-        for m in range(n_modalities):
-            knn_m = knn[:, :, m:m + 1]  # (n_cells, n_cells, 1)
-            knn_expanded = np.broadcast_to(knn_m, (knn.shape[0], knn.shape[1], n_types))
-            knn_mapped_list.append(
-                EdgeTypeMapper.reduce_to_virtual_types(
-                    knn_expanded, level_data, edge_type_map, reduction="max"
+        edge_type_map: Dict,
+        normalization_leaf_count: Optional[int] = None,
+    ) -> Tuple[
+        SparseTypedGraph,
+        SparseTypedGraph,
+        SparseTypedGraph,
+        Tuple[sparse.csr_matrix, ...],
+    ]:
+        """Map leaf channels with one hierarchy-wide strength normalization.
+
+        Binary topology uses union/max semantics.  Continuous ligand and
+        receptor evidence is summed over descendant leaves and, when provided,
+        divided by the total number of real leaves used by output aggregation.
+        """
+        if normalization_leaf_count is not None and normalization_leaf_count < 1:
+            raise ValueError("normalization_leaf_count must be >= 1")
+        base_graph = as_sparse_typed_graph(base_graph_adj)
+        ligand_graph = as_sparse_typed_graph(ligand_strength_adj)
+        receptor_graph = as_sparse_typed_graph(receptor_strength_adj)
+        if ligand_graph.shape != base_graph.shape:
+            raise ValueError("ligand_strength_adj must match base_graph_adj shape")
+        if receptor_graph.shape != base_graph.shape:
+            raise ValueError("receptor_strength_adj must match base_graph_adj shape")
+        for index, matrix in enumerate(knn_per_modality):
+            if matrix.shape != (base_graph.n_nodes, base_graph.n_nodes):
+                raise ValueError(
+                    f"knn_per_modality[{index}] must have shape "
+                    f"({base_graph.n_nodes}, {base_graph.n_nodes}), got "
+                    f"{matrix.shape}"
                 )
+        # The mapped base graph supplies topology only. Numeric ligand,
+        # receptor, and path-target values are constructed independently.
+        mapped_base = EdgeTypeMapper.reduce_to_virtual_types(
+            base_graph, level_data, edge_type_map, reduction="max"
+        )
+        strength_reduction = "sum" if normalization_leaf_count is not None else "avg"
+        mapped_ligand = EdgeTypeMapper.reduce_to_virtual_types(
+            ligand_graph,
+            level_data,
+            edge_type_map,
+            reduction=strength_reduction,
+        )
+        mapped_receptor = EdgeTypeMapper.reduce_to_virtual_types(
+            receptor_graph,
+            level_data,
+            edge_type_map,
+            reduction=strength_reduction,
+        )
+        if normalization_leaf_count is not None:
+            mapped_ligand = SparseTypedGraph.from_channels(
+                (
+                    channel / float(normalization_leaf_count)
+                    for channel in mapped_ligand
+                ),
+                mapped_ligand.n_nodes,
             )
-        knn_strength_adj = np.stack(knn_mapped_list, axis=-1)  # (n_cells, n_cells, n_groups, n_modalities)
-        return mapped_base_graph, mapped_ligand_strength, mapped_receptor_strength, knn_strength_adj
+            mapped_receptor = SparseTypedGraph.from_channels(
+                (
+                    channel / float(normalization_leaf_count)
+                    for channel in mapped_receptor
+                ),
+                mapped_receptor.n_nodes,
+            )
+        knn = tuple(sparse.csr_matrix(matrix) for matrix in knn_per_modality)
+        return mapped_base, mapped_ligand, mapped_receptor, knn

@@ -8,7 +8,6 @@ Supports FlagEmbedding library for semantic vector computation.
 import numpy as np
 from typing import List, Optional
 from pathlib import Path
-import os
 
 
 # Check if FlagEmbedding is available
@@ -28,7 +27,7 @@ class BGEEmbeddingUtils:
     
     # Default model path (relative to project root)
     _PROJECT_ROOT = Path(__file__).parent.parent.parent
-    _DEFAULT_MODEL_PATH = _PROJECT_ROOT / 'component' / 'bge-base-en-v1.5'
+    _DEFAULT_MODEL_PATH = _PROJECT_ROOT / "resources" / "bge-base-en-v1.5"
     
     # Model instance (lazy loading)
     _model_instance: Optional[FlagModel] = None
@@ -82,7 +81,7 @@ class BGEEmbeddingUtils:
         texts: List[str],
         model_path: Optional[Path] = None,
         normalize: bool = True,
-        fallback_to_random: bool = True
+        fallback_to_random: bool = False
     ) -> List[np.ndarray]:
         """
         Compute semantic vectors for a list of texts using BGE model.
@@ -91,7 +90,9 @@ class BGEEmbeddingUtils:
             texts: List of text strings to embed
             model_path: Optional path to model directory. If None, uses default path.
             normalize: Whether to normalize embeddings to unit vectors (default: True)
-            fallback_to_random: Whether to use random embeddings if model fails (default: True)
+            fallback_to_random: Explicitly allow random test embeddings. Disabled by
+                default because random vectors are not scientifically valid semantic
+                embeddings.
             
         Returns:
             List of numpy arrays representing embeddings (normalized to unit vectors if normalize=True)
@@ -134,7 +135,7 @@ class BGEEmbeddingUtils:
         text: str,
         model_path: Optional[Path] = None,
         normalize: bool = True,
-        fallback_to_random: bool = True
+        fallback_to_random: bool = False
     ) -> np.ndarray:
         """
         Compute semantic vector for a single text using BGE model.
@@ -143,7 +144,8 @@ class BGEEmbeddingUtils:
             text: Text string to embed
             model_path: Optional path to model directory. If None, uses default path.
             normalize: Whether to normalize embedding to unit vector (default: True)
-            fallback_to_random: Whether to use random embedding if model fails (default: True)
+            fallback_to_random: Explicitly allow a random test embedding. Disabled
+                by default.
             
         Returns:
             Numpy array representing the embedding (normalized to unit vector if normalize=True)
@@ -156,27 +158,10 @@ class BGEEmbeddingUtils:
         )
         if embeddings:
             return embeddings[0]
-        else:
-            # Fallback
+        if fallback_to_random:
             embedding = np.random.rand(768)
             if normalize:
                 embedding = embedding / np.linalg.norm(embedding)
             return embedding
+        raise RuntimeError("BGE model returned no embedding and fallback is disabled")
     
-    @classmethod
-    def is_available(cls) -> bool:
-        """
-        Check if BGE embedding is available.
-        
-        Returns:
-            True if FlagEmbedding is available, False otherwise
-        """
-        return FLAG_EMBEDDING_AVAILABLE
-    
-    @classmethod
-    def reset_model(cls) -> None:
-        """
-        Reset the cached model instance. Useful for reloading with a different model path.
-        """
-        cls._model_instance = None
-        cls._model_path = None

@@ -1,5 +1,5 @@
 """
-Clustering evaluation metrics utility for SpaGEM.
+Clustering evaluation metrics utility for CellSTIC.
 
 This module provides comprehensive clustering evaluation metrics for labeled data.
 """
@@ -7,6 +7,7 @@ This module provides comprehensive clustering evaluation metrics for labeled dat
 import numpy as np
 import torch
 from typing import Dict, Optional, Union
+from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import (
     adjusted_rand_score,
     adjusted_mutual_info_score,
@@ -24,6 +25,36 @@ class ClusteringMetrics:
     Supports labeled data evaluation:
     - External metrics (AMI, NMI, ARI, Homogeneity, Mutual_info, V-measure)
     """
+
+    @staticmethod
+    def align_labels(cluster_labels: np.ndarray, true_labels: np.ndarray) -> np.ndarray:
+        """Align cluster labels to true labels (Hungarian or majority per cluster)."""
+        cluster_labels = np.asarray(cluster_labels)
+        true_labels = np.asarray(true_labels)
+        if cluster_labels.shape[0] != true_labels.shape[0]:
+            raise ValueError("cluster_labels and true_labels must have same length")
+        unique_clusters = np.unique(cluster_labels)
+        unique_true = np.unique(true_labels)
+        n_true, n_clusters = len(unique_true), len(unique_clusters)
+        true_to_idx = {label: i for i, label in enumerate(unique_true)}
+        cluster_to_idx = {label: i for i, label in enumerate(unique_clusters)}
+        confusion = np.zeros((n_true, n_clusters), dtype=int)
+        for true_label, cluster_label in zip(true_labels, cluster_labels):
+            confusion[true_to_idx[true_label], cluster_to_idx[cluster_label]] += 1
+        row_ind, col_ind = linear_sum_assignment(-confusion)
+        cluster_to_aligned = {
+            unique_clusters[col_ind[i]]: unique_true[row_ind[i]]
+            for i in range(len(row_ind))
+        }
+        for cluster_label in unique_clusters:
+            if cluster_label not in cluster_to_aligned:
+                mask = cluster_labels == cluster_label
+                if mask.any():
+                    labels, counts = np.unique(true_labels[mask], return_counts=True)
+                    cluster_to_aligned[cluster_label] = labels[np.argmax(counts)]
+                else:
+                    cluster_to_aligned[cluster_label] = unique_true[0]
+        return np.array([cluster_to_aligned[label] for label in cluster_labels])
     
     @staticmethod
     def calculate_metrics(
@@ -45,7 +76,8 @@ class ClusteringMetrics:
         Args:
             features: Feature matrix (n_samples, n_features)
             true_labels: True labels for external metrics evaluation (optional)
-            cluster_labels: Pre-computed cluster labels (n_samples,) - if provided, skips clustering
+            cluster_labels: Required pre-computed cluster labels (n_samples,).
+                This function does not perform clustering.
             
         Returns:
             Dictionary containing metric names and their values
@@ -55,7 +87,7 @@ class ClusteringMetrics:
             features = features.detach().cpu().numpy()
         features = np.asarray(features)
         
-        # Use pre-computed cluster labels if provided, otherwise perform clustering
+        # Convert the required pre-computed cluster labels to NumPy.
         if isinstance(cluster_labels, torch.Tensor):
             cluster_labels = cluster_labels.detach().cpu().numpy()
         cluster_labels = np.asarray(cluster_labels)
@@ -85,40 +117,40 @@ class ClusteringMetrics:
         if true_labels is not None:
             true_labels = np.asarray(true_labels)
             
-            # AMI (Adjusted Mutual Information): Range [0, 1], higher is better
+            # AMI: 1 means identical partitions, 0 is chance-level; values may be negative.
             try:
                 metrics['AMI'] = float(adjusted_mutual_info_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['AMI'] = np.nan
             
             # NMI (Normalized Mutual Information): Range [0, 1], higher is better
             try:
                 metrics['NMI'] = float(normalized_mutual_info_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['NMI'] = np.nan
             
             # ARI (Adjusted Rand Index): Range [-1, 1], higher is better
             try:
                 metrics['ARI'] = float(adjusted_rand_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['ARI'] = np.nan
             
             # Homogeneity: Range [0, 1], higher is better
             try:
                 metrics['Homogeneity'] = float(homogeneity_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['Homogeneity'] = np.nan
             
             # Mutual_info: Raw mutual information, higher is better
             try:
                 metrics['Mutual_info'] = float(mutual_info_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['Mutual_info'] = np.nan
             
             # V-measure: Range [0, 1], higher is better
             try:
                 metrics['V-measure'] = float(v_measure_score(true_labels, cluster_labels))
-            except Exception as e:
+            except Exception:
                 metrics['V-measure'] = np.nan
         
         # Print metrics directly after calculation
@@ -146,9 +178,9 @@ class ClusteringMetrics:
         
         # External metrics (if available)
         if any(key in metrics for key in ['AMI', 'NMI', 'ARI', 'Homogeneity', 'Mutual_info', 'V-measure']):
-            print(f"\n🏷️  External Metrics (Labeled Data):")
+            print("\n🏷️  External Metrics (Labeled Data):")
             if 'AMI' in metrics and not np.isnan(metrics['AMI']):
-                print(f"  • AMI (Adjusted Mutual Info):    {metrics['AMI']:.{precision}f} [range: 0 to 1, higher better]")
+                print(f"  • AMI (Adjusted Mutual Info):    {metrics['AMI']:.{precision}f} [1: agreement; 0: chance; can be negative]")
             if 'NMI' in metrics and not np.isnan(metrics['NMI']):
                 print(f"  • NMI (Normalized Mutual Info): {metrics['NMI']:.{precision}f} [range: 0 to 1, higher better]")
             if 'ARI' in metrics and not np.isnan(metrics['ARI']):

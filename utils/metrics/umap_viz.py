@@ -7,10 +7,18 @@ import scanpy as sc
 import anndata as ad
 from typing import Optional
 
-from utils.viz.matplotlib_svg import configure_matplotlib_svg_for_illustrator, path_wants_svg
 from sklearn.neighbors import KernelDensity
 
-from utils.tools.seed_utils import active_base_seed
+
+def path_wants_svg(path: str) -> bool:
+    return str(path).lower().endswith(".svg")
+
+
+def configure_matplotlib_svg_for_illustrator() -> None:
+    """Keep SVG text as editable text for vector editors."""
+    import matplotlib as mpl
+
+    mpl.rcParams["svg.fonttype"] = "none"
 
 
 class UMAPVisualizer:
@@ -54,8 +62,8 @@ class UMAPVisualizer:
         
         # Compute neighbors and UMAP using scanpy (similar to SpatialGlue style)
         # Set random_state for reproducibility
-        sc.pp.neighbors(adata, use_rep='features', n_neighbors=n_neighbors, random_state=active_base_seed())
-        sc.tl.umap(adata, random_state=active_base_seed())
+        sc.pp.neighbors(adata, use_rep='features', n_neighbors=n_neighbors, random_state=0)
+        sc.tl.umap(adata, random_state=0)
         
         # Setup font and scanpy parameters - Nature style
         # Try Arial first (Nature standard), fallback to DejaVu Sans

@@ -9,92 +9,133 @@ from typing import Dict, Optional
 from utils.tools import get_metadata_from_db, normalize_edge_type, parse_ligand_receptor
 
 from .base import HierarchyTree
+from .structure import children_counts_for_height
 
 
 class BiologicalHierarchyBuilder:
     """Builder for biological hierarchical label trees"""
-    
+
     @staticmethod
-    def build(edge_type_map: Dict[str, int], 
-              cell_chat_db: Optional[Dict] = None) -> HierarchyTree:
+    def build(
+        edge_type_map: Dict[str, int], cell_chat_db: Optional[Dict] = None,
+        height: Optional[int] = None,
+    ) -> HierarchyTree:
         """
         Build hierarchical label tree using biological knowledge.
-        
+
         Hierarchy Design:
         - Level 1: Root node (interaction validity) - all edge_types
         - Level 2: Functional phenotype classification based on annotation + is_neurotransmitter
         - Level 3: Spatial matching filter based on receptor.secreted_type & ligand.secreted_type
         - Level 4: Individual molecular pairs, actual ligand-receptor pairs (leaf nodes)
-        
+
         Args:
             edge_type_map: Dictionary mapping edge type names (format: "ligand:receptor") to integer indices
             cell_chat_db: Optional CellChatDB data. Can be:
-                         - pandas DataFrame with columns: ligand, receptor, pathway_name (or annotation), 
+                         - pandas DataFrame with columns: ligand, receptor, pathway_name (or annotation),
                            ligand.secreted_type, receptor.secreted_type, is_neurotransmitter
                          - Dictionary mapping "ligand:receptor" (format: "TGFB1:TGFbR1_R2") to complete row info dict
                            containing all CSV columns (e.g., annotation, pathway_name, ligand.secreted_type,
                            receptor.secreted_type, is_neurotransmitter, etc.)
                          - Dictionary mapping ligand/receptor names to metadata dict (legacy format)
-        
+
         Returns:
             HierarchyTree: Hierarchical label structure
         """
+        if height is not None:
+            children_counts_for_height(1, height)
         if not edge_type_map:
             return HierarchyTree("root")
-        
-        normalized_edge_type_map = {
-            normalize_edge_type(et): idx for et, idx in edge_type_map.items()
-        }
+        if cell_chat_db is None or (
+            hasattr(cell_chat_db, "__len__") and len(cell_chat_db) == 0
+        ):
+            raise ValueError(
+                "hierarchy_method='biological' requires a non-empty CellChatDB"
+            )
+
+        normalized_edge_type_map = {}
+        for edge_type, type_index in edge_type_map.items():
+            normalized_name = normalize_edge_type(edge_type)
+            if normalized_name in normalized_edge_type_map:
+                raise ValueError(
+                    "Multiple ligand-receptor channels normalize to "
+                    f"{normalized_name!r}"
+                )
+            normalized_edge_type_map[normalized_name] = type_index
         tree = HierarchyTree("root")
 
         edge_type_info = {}
+        matched_metadata = 0
         for edge_type, type_idx in normalized_edge_type_map.items():
             ligand, receptor = parse_ligand_receptor(edge_type)
-            receptor_for_db = receptor.replace(':', '_')
+            receptor_for_db = receptor.replace(":", "_")
             metadata = get_metadata_from_db(ligand, receptor_for_db, cell_chat_db)
-            annotation = metadata['annotation']
-            
+            annotation = metadata["annotation"]
+            if annotation != "Unknown":
+                matched_metadata += 1
+
             edge_type_info[edge_type] = {
-                'ligand': ligand,
-                'receptor': receptor,
-                'type_idx': type_idx,
-                'annotation': annotation,
-                'is_neurotransmitter': metadata['is_neurotransmitter'],
-                'ligand_secreted_type': metadata['ligand_secreted_type'],
-                'receptor_secreted_type': metadata['receptor_secreted_type']
+                "ligand": ligand,
+                "receptor": receptor,
+                "type_idx": type_idx,
+                "annotation": annotation,
+                "is_neurotransmitter": metadata["is_neurotransmitter"],
+                "ligand_secreted_type": metadata["ligand_secreted_type"],
+                "receptor_secreted_type": metadata["receptor_secreted_type"],
             }
-        
+        if matched_metadata == 0:
+            raise ValueError(
+                "CellChatDB contains no metadata matching the retained "
+                "ligand-receptor channels"
+            )
+
+        if height == 2:
+            for edge_type, info in edge_type_info.items():
+                tree.add_node(
+                    name=edge_type, parent_name="root", level=1,
+                    edge_types=[edge_type], type_indices=[info["type_idx"]],
+                    metadata=info,
+                )
+            return tree
+
         # Level 1: Root node (already created)
         # All edge types belong to root
-        
+
         # Level 2: Function phenotype classification (annotation + is_neurotransmitter)
         # Group by: annotation + "_neurotransmitter" if is_neurotransmitter else annotation
         level2_groups = {}
         for edge_type, info in edge_type_info.items():
             # Create level 2 group name
-            if info['is_neurotransmitter']:
+            if info["is_neurotransmitter"]:
                 level2_name = f"{info['annotation']}_neurotransmitter"
             else:
-                level2_name = info['annotation']
-            
+                level2_name = info["annotation"]
+
             if level2_name not in level2_groups:
                 level2_groups[level2_name] = []
             level2_groups[level2_name].append(edge_type)
-        
+
         # Check if level 2 should be skipped (only one node)
-        skip_level2 = len(level2_groups) == 1
-        
+        skip_level2 = height is None and len(level2_groups) == 1
+
         # Create level 2 nodes (skip if only one node)
         level2_nodes = {}
         if not skip_level2:
             for level2_name, edge_types in level2_groups.items():
-                node = tree.add_node(
-                    name=level2_name,
-                    parent_name="root",
-                    level=1
-                )
+                node = tree.add_node(name=level2_name, parent_name="root", level=1)
                 level2_nodes[level2_name] = node
-        
+
+        if height == 3:
+            for level2_name, edge_types in level2_groups.items():
+                for edge_type in edge_types:
+                    info = edge_type_info[edge_type]
+                    tree.add_node(
+                        name=edge_type, parent_name=level2_name, level=2,
+                        edge_types=[edge_type], type_indices=[info["type_idx"]],
+                        metadata=info,
+                    )
+            return tree
+
         # Level 3: Spatial matching filter (receptor.secreted_type & ligand.secreted_type)
         # Group by: "ligand_secreted_type&receptor_secreted_type" (use & for virtual nodes)
         level3_groups = {}
@@ -103,14 +144,14 @@ class BiologicalHierarchyBuilder:
             for edge_type in edge_types:
                 info = edge_type_info[edge_type]
                 # Create level 3 group name based on secreted types
-                ligand_sec = info['ligand_secreted_type']
-                receptor_sec = info['receptor_secreted_type']
+                ligand_sec = info["ligand_secreted_type"]
+                receptor_sec = info["receptor_secreted_type"]
                 level3_name = f"{ligand_sec}&{receptor_sec}"
-                
+
                 if level3_name not in level3_groups[level2_name]:
                     level3_groups[level2_name][level3_name] = []
                 level3_groups[level2_name][level3_name].append(edge_type)
-        
+
         level3_nodes = {}
         for level2_name, level3_dict in level3_groups.items():
             level3_nodes[level2_name] = {}
@@ -118,7 +159,11 @@ class BiologicalHierarchyBuilder:
             for level3_name, edge_types in level3_dict.items():
                 unique_level3_name = level3_name
                 existing_node = tree.get_node(level3_name)
-                if existing_node is not None and existing_node.parent.name == parent_name:
+                if (
+                    existing_node is not None
+                    and existing_node.parent is not None
+                    and existing_node.parent.name == parent_name
+                ):
                     node = existing_node
                 else:
                     if existing_node is not None:
@@ -131,10 +176,10 @@ class BiologicalHierarchyBuilder:
                     node = tree.add_node(
                         name=unique_level3_name,
                         parent_name=parent_name,
-                        level=2 if not skip_level2 else 1
+                        level=2 if not skip_level2 else 1,
                     )
                 level3_nodes[level2_name][level3_name] = node
-        
+
         # Level 4: Individual ligand-receptor pairs (leaf nodes)
         # Each edge_type becomes a leaf node
         for level2_name, level3_dict in level3_groups.items():
@@ -145,8 +190,20 @@ class BiologicalHierarchyBuilder:
                 if skip_level2:
                     leaf_level = 2
                 else:
-                    leaf_level = 3
-                
+                    leaf_level = (height - 1) if height is not None else 3
+                    # Biological annotations supply three semantic group
+                    # transitions. Extra requested levels retain those groups
+                    # through uniquely named structural intermediary nodes.
+                    parent = level3_node
+                    for level in range(3, leaf_level):
+                        bridge = tree.add_node(
+                            name=f"bridge_{parent.node_id}_level_{level}",
+                            parent_name=parent.name,
+                            level=level,
+                        )
+                        parent = bridge
+                    parent_name = parent.name
+
                 for edge_type in edge_types:
                     info = edge_type_info[edge_type]
                     # Create leaf node with edge_type as name
@@ -155,17 +212,17 @@ class BiologicalHierarchyBuilder:
                         parent_name=parent_name,
                         level=leaf_level,
                         edge_types=[edge_type],
-                        type_indices=[info['type_idx']],
+                        type_indices=[info["type_idx"]],
                         metadata={
-                            'ligand': info['ligand'],
-                            'receptor': info['receptor'],
-                            'annotation': info['annotation'],
-                            'is_neurotransmitter': info['is_neurotransmitter'],
-                            'ligand_secreted_type': info['ligand_secreted_type'],
-                            'receptor_secreted_type': info['receptor_secreted_type']
-                        }
+                            "ligand": info["ligand"],
+                            "receptor": info["receptor"],
+                            "annotation": info["annotation"],
+                            "is_neurotransmitter": info["is_neurotransmitter"],
+                            "ligand_secreted_type": info["ligand_secreted_type"],
+                            "receptor_secreted_type": info["receptor_secreted_type"],
+                        },
                     )
                     # Update edge type to node mapping
                     tree._edge_type_to_node[edge_type] = leaf_node
-        
+
         return tree
