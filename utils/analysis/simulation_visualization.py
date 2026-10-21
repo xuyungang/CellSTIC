@@ -114,7 +114,7 @@ def render(datasets: list[dict], cells: pd.DataFrame, dpi: int,
 
     with mpl.rc_context(STYLE):
         figure, axes = plt.subplots(2, 3, figsize=FIGURE_SIZE, dpi=dpi)
-        figure.subplots_adjust(left=0.075, right=0.880, top=0.865,
+        figure.subplots_adjust(left=0.075, right=0.975, top=0.865,
                                bottom=0.100, wspace=0.130, hspace=0.190)
         for column, data in enumerate(datasets):
             table = cells.loc[cells.dataset_id.eq(data["dataset_id"])]
@@ -146,28 +146,6 @@ def render(datasets: list[dict], cells: pd.DataFrame, dpi: int,
                 fontweight="bold", color="#25364B",
             )
 
-        for row, norm, cmap, ticks, label in (
-            (0, truth_norm, TRUTH_CMAP,
-             sorted(set([0, truth_max // 2, truth_max])),
-             "True incoming edges / cell"),
-            (1, prediction_norm, PRED_CMAP, pred_ticks,
-             "Predicted incoming strength / cell"),
-        ):
-            position = axes[row, -1].get_position()
-            colorbar_axis = figure.add_axes((0.905, position.y0, 0.014, position.height))
-            colorbar = figure.colorbar(
-                mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
-                cax=colorbar_axis, orientation="vertical", ticks=ticks,
-            )
-            colorbar.ax.tick_params(length=2, width=0.5, pad=2, labelsize=6.0)
-            colorbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.0f"))
-            colorbar.outline.set_edgecolor("#8492A1")
-            colorbar.outline.set_linewidth(0.5)
-            figure.text(
-                0.975, (position.y0 + position.y1) / 2, label,
-                rotation=90, ha="center", va="center",
-                fontsize=6.4, color="#38485B",
-            )
         return figure
 
 from .result_io import load_result, lr_matrices, clean_matrix
