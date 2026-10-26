@@ -7,6 +7,7 @@ import argparse
 import csv
 import gc
 import gzip
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyreadr
 import scipy.io
 import scipy.sparse as sparse
 from PIL import Image
@@ -44,6 +46,15 @@ SAMPLES = {
             ("Efna3", "Epha5", "D1_fused_Efna3-Epha5_brain_CH2.png"),
         ),
     },
+}
+
+# Protein labels used in the authors' Figure 4c metadata filenames.
+AUTHOR_PAIR_NAMES = {
+    "Fgf8_Fgfr1": "FGF8-FGFR1",
+    "Dll1_Notch1": "DLL1-NOTC1",
+    "Spp1_Cd44": "OSTP-CD44",
+    "Igf2_Igf2r": "IGF2-MPRI",
+    "Efna3_Epha5": "EFNA3-EPHA5",
 }
 
 
@@ -107,6 +118,88 @@ def _load_matrix(path: Path) -> sparse.csr_matrix:
     if matrix.dtype != np.int32:
         matrix = matrix.astype(np.int32)
     return matrix.T.tocsr()
+
+
+def _add_author_metadata(adata: ad.AnnData, dataset_dir: Path, sample: str) -> None:
+    """Join pair-specific ROI/PLA values by barcode; retain unannotated bins."""
+    metadata_dir = dataset_dir / "raw" / "cytosignal_figure"
+    manifest_path = metadata_dir / "download_manifest.json"
+    with manifest_path.open() as handle:
+        manifest = json.load(handle)
+    sources = {entry["file"]: entry for entry in manifest["files"]}
+    if len(sources) != len(manifest["files"]):
+        raise ValueError(f"{manifest_path} contains duplicate filenames")
+
+    pairs = adata.uns["pla_pairs"].copy()
+    author_metadata = {}
+    checksums = {}
+    for index, pair in pairs.iterrows():
+        pair_key = f"{pair['ligand']}_{pair['receptor']}"
+        filename = f"MetaData_{sample}_16um_{AUTHOR_PAIR_NAMES[pair_key]}.rds"
+        path = metadata_dir / filename
+        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+        if checksum != sources[filename]["sha256"]:
+            raise ValueError(f"{path} does not match its recorded SHA-256 checksum")
+
+        metadata = pyreadr.read_r(str(path))[None]
+        required = {"region", "PLA_Median", "x", "y"}
+        missing_columns = required.difference(metadata.columns)
+        if missing_columns:
+            raise ValueError(f"{path} is missing columns: {sorted(missing_columns)}")
+        if metadata.empty or metadata.index.has_duplicates or metadata.index.isna().any():
+            raise ValueError(f"{path} must contain nonempty, unique barcodes")
+        metadata.index = pd.Index(metadata.index, name="barcode")
+        missing_barcodes = metadata.index.difference(adata.obs_names)
+        if len(missing_barcodes):
+            raise ValueError(
+                f"{path}: {len(missing_barcodes)} author barcodes are absent from {sample}"
+            )
+        if not metadata["region"].isin(["roi", "not_roi"]).all():
+            raise ValueError(f"{path} contains missing or unknown region labels")
+
+        # Author plotting coordinates flip the full-resolution image's y axis.
+        expected_xy = adata.obs.loc[
+            metadata.index, ["pxl_col_in_fullres", "pxl_row_in_fullres"]
+        ].to_numpy(dtype=np.float64)
+        expected_xy[:, 1] *= -1
+        if not np.allclose(
+            metadata[["x", "y"]].to_numpy(), expected_xy, rtol=0, atol=1e-6
+        ):
+            raise ValueError(f"{path}: author coordinates do not match barcode positions")
+
+        aligned = metadata.reindex(adata.obs_names)
+        region_column = f"region_{pair_key}"
+        pla_column = f"pla_median_{pair_key}"
+        adata.obs[region_column] = pd.Categorical(
+            aligned["region"], categories=["not_roi", "roi"]
+        )
+        adata.obs[pla_column] = aligned["PLA_Median"]
+        author_metadata[pair_key] = metadata
+        checksums[pair_key] = checksum
+        pairs.loc[index, "author_metadata_file"] = str(path.relative_to(dataset_dir))
+        pairs.loc[index, "region_column"] = region_column
+        pairs.loc[index, "pla_median_column"] = pla_column
+        print(
+            f"  {pair_key}: {len(metadata):,} author annotations, "
+            f"{aligned['region'].eq('roi').sum():,} ROI bins, "
+            f"{aligned['region'].isna().sum():,} unannotated bins",
+            flush=True,
+        )
+
+    adata.uns["pla_pairs"] = pairs
+    # Keep complete source tables, including benchmark scores and original x/y.
+    # These tables contain only author-annotated bins and are indexed by barcode.
+    adata.uns["author_metadata"] = author_metadata
+    adata.uns["author_metadata_provenance"] = {
+        "repository": manifest["repository"],
+        "commit": manifest["commit"],
+        "sha256": checksums,
+        "coordinate_convention": "x = pxl_col_in_fullres; y = -pxl_row_in_fullres",
+        "missing_annotation": "NA in obs means no author annotation, not not_roi",
+    }
+    adata.uns["source_files"]["author_metadata_manifest"] = str(
+        manifest_path.relative_to(dataset_dir)
+    )
 
 
 def assemble_sample(dataset_dir: Path, sample: str, overwrite: bool) -> Path:
@@ -210,6 +303,7 @@ def assemble_sample(dataset_dir: Path, sample: str, overwrite: bool) -> Path:
         "clusters": str(cluster_path.relative_to(dataset_dir)),
         "scalefactors": str(scalefactors_path.relative_to(dataset_dir)),
     }
+    _add_author_metadata(adata, dataset_dir, sample)
 
     temporary = output.with_suffix(".h5ad.tmp")
     adata.write_h5ad(temporary, compression="gzip", compression_opts=4)
